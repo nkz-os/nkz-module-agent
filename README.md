@@ -138,8 +138,8 @@ The included `.github/workflows/build-push.yml` handles everything via GitHub Ac
 
 The publish step uses **GitHub OIDC** for authentication:
 - Runner gets a signed JWT from `token.actions.githubusercontent.com`
-- `POST https://nkz.robotika.cloud/api/internal/modules/agent/publish`
-- No manual MinIO uploads. No `kubectl`. No database SQL.
+- `POST https://your-api-domain/api/internal/modules/agent/publish`
+- No manual MinIO uploads, no manual cluster commands, no database SQL.
 
 **Prerequisites (one-time, org-level — already done for nkz-os):**
 - Org secret `INTERNAL_SERVICE_SECRET` configured in GitHub Actions secrets

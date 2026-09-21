@@ -31,15 +31,14 @@ jobs:
     # ==========================================================================
     # Placeholder guard
     # ==========================================================================
-    # The template ships uppercase placeholders, and a placeholder image name is
-    # a syntactically VALID image reference — so a build that runs before
-    # scripts/init-module.sh publishes a real GHCR package under the placeholder
-    # name instead of failing. That is exactly how the stale
-    # lowercased placeholder packages on GHCR were created.
+    # A container image reference cannot contain uppercase, so an uppercase
+    # segment in BACKEND_IMAGE means the module id/org is misconfigured — a
+    # build that runs anyway would publish a broken image name to GHCR instead
+    # of failing loudly. That is exactly how stale placeholder-named packages
+    # on GHCR have been created before.
     #
     # This job derives the answer from BACKEND_IMAGE itself, so the build and
-    # publish jobs switch themselves on the moment init-module.sh has run.
-    # Do NOT gate them by hand.
+    # publish jobs switch themselves on automatically. Do NOT gate them by hand.
     guard:
         name: Placeholder guard
         runs-on: ubuntu-latest
@@ -50,15 +49,12 @@ jobs:
               id: check
               run: |
                   # A container image reference cannot contain uppercase, so an
-                  # uppercase segment here means the template placeholders are
-                  # still in place. This check deliberately does NOT spell the
-                  # placeholder out: init-module.sh rewrites every occurrence of
-                  # it and would rewrite this test along with it, permanently
-                  # disabling the build.
+                  # uppercase segment here means the module id/org still holds
+                  # an invalid value.
                   case "${BACKEND_IMAGE##*/}" in
                       *[[:upper:]]*)
                           echo "initialised=false" >> "$GITHUB_OUTPUT"
-                          echo "::notice title=Template not initialised::Placeholders are still in place. Run scripts/init-module.sh; build and publish stay skipped until then."
+                          echo "::notice title=Invalid module id::BACKEND_IMAGE contains uppercase characters (module id/org misconfigured); build and publish stay skipped until it's fixed."
                           ;;
                       *)
                           echo "initialised=true" >> "$GITHUB_OUTPUT"
@@ -104,9 +100,8 @@ jobs:
     # ==========================================================================
     # Build Module Federation 2.0 remote
     # ==========================================================================
-    # Skipped while the template's placeholder ids are still in place (they fail
-    # the nkzModulePreset kebab-case validator). Enables itself automatically
-    # once scripts/init-module.sh has replaced them — see the `guard` job.
+    # Gated on the `guard` job — an invalid (uppercase-containing) module id
+    # would fail the nkzModulePreset kebab-case validator anyway.
     build-module:
         name: Build MF2 Bundle
         runs-on: ubuntu-latest
