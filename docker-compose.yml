@@ -1,0 +1,75 @@
+# =============================================================================
+# Agent - Local Development with Docker Compose
+# =============================================================================
+# Runs the backend API locally. The frontend is a Vite dev server (npm run dev),
+# not a Docker container — Module Federation 2.0 remotes don't ship a
+# standalone frontend image, they are built and uploaded to MinIO.
+#
+# Usage:
+#   docker-compose up        # Start backend
+#   docker-compose up -d     # Start in background
+#   docker-compose down      # Stop
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # Backend API server
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Agent
+      - DEBUG=true
+      - API_PREFIX=/api/agent
+      - CORS_ORIGINS=["http://localhost:5003","http://localhost:5173"]
+      # Auth: this module trusts gateway-injected headers (X-Tenant-ID,
+      # X-User-ID, X-User-Roles) — no Keycloak/JWT config needed here.
+      - INTERNAL_SERVICE_SECRET=dev-only-secret-change-me
+    volumes:
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+
+# =============================================================================
+# Optional Services - Uncomment if needed
+# =============================================================================
+
+  # PostgreSQL database (uncomment if needed)
+  # db:
+  #   image: timescale/timescaledb:latest-pg15
+  #   ports:
+  #     - "5432:5432"
+  #   environment:
+  #     - POSTGRES_USER=module
+  #     - POSTGRES_PASSWORD=modulepass
+  #     - POSTGRES_DB=module_db
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U module"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # Redis (uncomment if using Celery or caching)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+# volumes:
+#   postgres_data:

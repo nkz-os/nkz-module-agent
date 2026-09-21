@@ -1,0 +1,91 @@
+"""
+Tests for Agent Backend
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.main import app
+
+
+@pytest.fixture
+def client():
+    """Test client fixture."""
+    return TestClient(app)
+
+
+class TestHealth:
+    """Health endpoint tests."""
+
+    def test_health_check(self, client):
+        """Test health endpoint returns healthy status."""
+        response = client.get("/health")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "service" in data
+        assert "version" in data
+
+
+class TestAPI:
+    """API endpoint tests."""
+
+    def test_docs_available(self, client):
+        """Test OpenAPI docs are available."""
+        response = client.get("/api/agent/docs")
+        # Should return HTML or redirect
+        assert response.status_code in [200, 307]
+
+    def test_openapi_schema(self, client):
+        """Test OpenAPI schema is generated."""
+        response = client.get("/api/agent/openapi.json")
+        assert response.status_code == 200
+
+        schema = response.json()
+        assert "openapi" in schema
+        assert "paths" in schema
+
+    def test_list_data_requires_auth(self, client):
+        """Requests without gateway headers (X-Tenant-ID / X-User-ID) are rejected."""
+        response = client.get("/api/agent/data")
+        assert response.status_code == 401
+
+    def test_list_data_with_gateway_headers(self, client):
+        """Gateway-injected headers are trusted directly — no JWT/JWKS involved."""
+        response = client.get(
+            "/api/agent/data",
+            headers={"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"},
+        )
+        assert response.status_code == 200
+
+
+class TestInternal:
+    """/internal/* routes — authenticated by X-Internal-Service-Secret, not gateway headers."""
+
+    @pytest.fixture(autouse=True)
+    def _internal_secret(self, monkeypatch):
+        monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "test-internal-secret")
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    def test_internal_rejects_missing_secret(self, client):
+        response = client.post("/api/agent/internal/ping")
+        assert response.status_code == 401
+
+    def test_internal_rejects_wrong_secret(self, client):
+        response = client.post(
+            "/api/agent/internal/ping",
+            headers={"X-Internal-Service-Secret": "wrong"},
+        )
+        assert response.status_code == 401
+
+    def test_internal_accepts_correct_secret(self, client):
+        response = client.post(
+            "/api/agent/internal/ping",
+            headers={"X-Internal-Service-Secret": "test-internal-secret"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}

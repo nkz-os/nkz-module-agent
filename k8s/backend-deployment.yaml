@@ -1,0 +1,116 @@
+# =============================================================================
+# Agent Backend Deployment
+# =============================================================================
+# Backend API service for Agent module
+# =============================================================================
+
+---
+# Deployment: Agent Backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-backend
+  namespace: nekazari
+  labels:
+    app: agent-backend
+    component: backend
+    module: agent
+    nekazari.io/profile: addon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-backend
+  template:
+    metadata:
+      labels:
+        app: agent-backend
+        component: backend
+        module: agent
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/nkz-os/agent-backend:v1.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          # Non-secret config (service URLs, CORS origins) belongs in a
+          # ConfigMap overlay in gitops-config/overlays/modules/agent/ —
+          # NOT in this public repo. `optional: true` so config.py's own
+          # defaults apply when the ConfigMap doesn't exist (e.g. local dev).
+          envFrom:
+            - configMapRef:
+                name: agent-config
+                optional: true
+          env:
+            - name: APP_NAME
+              value: "Agent"
+            - name: DEBUG
+              value: "false"
+            - name: API_PREFIX
+              value: "/api/agent"
+            # CORS — explicit origin whitelist (never *). This is a local
+            # placeholder; the production value lives in the ConfigMap overlay.
+            - name: CORS_ORIGINS
+              value: '["https://your-frontend-domain"]'
+            # Auth: this module trusts gateway-injected headers (X-Tenant-ID,
+            # X-User-ID, X-User-Roles) via nkz_platform_sdk.auth.require_auth —
+            # no Keycloak/JWT config needed here (see app/middleware).
+            # Internal service-to-service auth (/internal/* routes only) —
+            # shared K8s Secret, hmac.compare_digest verification.
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: secret
+                  optional: true
+          # Database (only if this module writes admin/metadata to PostgreSQL —
+          # NEVER for time-series/telemetry, which flows through Orion-LD
+          # subscriptions only. See app/config.py:require_postgres_url.)
+          # - name: POSTGRES_URL
+          #   valueFrom:
+          #     secretKeyRef:
+          #       name: postgresql-secret
+          #       key: connection-string
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+---
+# Service: Agent Backend API
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-api-service
+  namespace: nekazari
+  labels:
+    app: agent-backend
+    module: agent
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: agent-backend
