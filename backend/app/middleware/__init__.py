@@ -116,13 +116,28 @@ async def verify_internal_secret(
     calling this module's setup/lifecycle endpoints) use this shared secret
     directly, matching the platform's canonical /internal/* pattern.
 
+    Compared as utf-8 bytes, not str: hmac.compare_digest raises TypeError
+    when either operand is a non-ASCII str, so a raw non-ASCII header byte
+    would otherwise 500 (the attacker side of this is already safe either
+    way — an unhandled 500 still rejects the request — but a non-ASCII
+    INTERNAL_SERVICE_SECRET would then 500 every legitimate internal call
+    forever). Mirrors the identical fix in app/api/webhook.py._authorised.
+
     Usage:
         @router.post("/internal/setup-parcel", dependencies=[Depends(verify_internal_secret)])
         async def setup_parcel(...): ...
     """
     expected = settings.internal_service_secret
     provided = x_internal_service_secret or ""
-    if not expected or not hmac.compare_digest(provided, expected):
+    authorised = False
+    if expected:
+        try:
+            authorised = hmac.compare_digest(
+                provided.encode("utf-8"), expected.encode("utf-8")
+            )
+        except (TypeError, ValueError):
+            authorised = False
+    if not authorised:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing internal service secret",

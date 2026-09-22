@@ -96,3 +96,18 @@ class TestInternal:
         )
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+    def test_internal_rejects_non_ascii_secret_not_500(self, client):
+        """Mirrors test_non_ascii_header_is_rejected_not_500 in
+        test_webhook_auth.py: hmac.compare_digest raises TypeError on a
+        non-ASCII str operand. The attacker side is already safe either way
+        (an unhandled 500 still rejects the request) — what matters is the
+        mirror case, worse than the attack: a misconfigured non-ASCII
+        INTERNAL_SERVICE_SECRET must not turn every legitimate internal call
+        into a permanent 500 instead of a clean 401.
+        """
+        response = client.post(
+            "/api/agent/internal/ping",
+            headers={"X-Internal-Service-Secret": b"\xff"},
+        )
+        assert response.status_code == 401
