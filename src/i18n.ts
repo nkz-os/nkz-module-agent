@@ -9,23 +9,19 @@
 import { i18n } from '@nekazari/sdk';
 import en from './locales/en.json';
 import es from './locales/es.json';
-import ca from './locales/ca.json';
-import eu from './locales/eu.json';
-import fr from './locales/fr.json';
-import pt from './locales/pt.json';
 
 // Namespace must match the module id (agent) so t('key', { ns: 'agent' })
 // and useTranslation('agent') resolve these bundles.
 const NAMESPACE = 'agent';
 
+// es + en are the platform minimum (see nkz AGENTS.md §3 Frontend — I18n).
+// ca/eu/fr/pt are not registered: this module ships no translated content
+// for them, and an empty bundle is not a translation — do not invent one.
+// Add a locale here only alongside real content in src/locales/<code>.json.
 export function registerModuleTranslations(): void {
   if (!i18n || typeof (i18n as any).addResourceBundle !== 'function') return;
   i18n.addResourceBundle('en', NAMESPACE, en, true, true);
   i18n.addResourceBundle('es', NAMESPACE, es, true, true);
-  i18n.addResourceBundle('ca', NAMESPACE, ca, true, true);
-  i18n.addResourceBundle('eu', NAMESPACE, eu, true, true);
-  i18n.addResourceBundle('fr', NAMESPACE, fr, true, true);
-  i18n.addResourceBundle('pt', NAMESPACE, pt, true, true);
 }
 
 registerModuleTranslations();

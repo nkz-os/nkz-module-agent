@@ -11,7 +11,7 @@ import { LinkPanel } from './components/LinkPanel';
 import './i18n';
 import './index.css';
 
-// Must match the `accent` passed to defineModule() in moduleEntry.ts.
+// Must match the `accent` passed to defineModule() in Module.tsx.
 const moduleAccent = { base: '#3B82F6', soft: '#DBEAFE', strong: '#1D4ED8' };
 
 export default function App() {

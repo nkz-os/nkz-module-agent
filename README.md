@@ -39,8 +39,8 @@ nkz-module-agent/
 │   ├── components/LinkPanel.tsx # Generate/list/revoke channel links
 │   ├── main.tsx                 # Dev-only entry (Vite) — not part of the production bundle
 │   ├── i18n.ts                  # i18next resource bundle registration
-│   ├── locales/                 # en/es filled in; ca/eu/fr/pt ship as {} skeletons
-│   └── slots/index.ts           # Declares which host slots this module occupies
+│   ├── locales/                 # en/es only — the platform minimum; no empty skeletons registered
+│   └── slots/index.ts           # Declares which host slots this module occupies (none, currently)
 ├── backend/
 │   └── app/
 │       ├── api/__init__.py      # Management routes — gateway-trusted, require_auth()
@@ -119,9 +119,9 @@ const { selectedEntityId } = useViewer();
 const { isAuthenticated, user, getToken, getTenantId } = useAuth();
 ```
 
-`src/services/api.ts` wraps `NKZClient` (also from `@nekazari/sdk`) with the module's `VITE_API_URL` base as a template pattern for calling this module's own backend — it is currently unused scaffolding; `LinkPanel.tsx` calls the backend with plain `fetch(..., { credentials: 'include' })` instead. There is **no `useConfig()` hook**; read the API base at build time via `import.meta.env.VITE_API_URL`.
+`LinkPanel.tsx` calls this module's own backend with plain `fetch(..., { credentials: 'include' })` — the platform cookie carries auth, so there is no token to attach by hand. There is **no `useConfig()` hook**; read the API base at build time via `import.meta.env.VITE_API_URL`.
 
-You never write raw `fetch`, never handle JWT cookies, never construct `Fiware-Service` headers by hand.
+You never handle JWT cookies yourself, never construct `Fiware-Service` headers by hand.
 
 ---
 
@@ -182,7 +182,7 @@ docker run -d --name agent-test-db -p 55432:5432 \
 export POSTGRES_URL=postgresql://postgres:test@localhost:55432/test
 
 cd backend
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
@@ -236,11 +236,15 @@ If `api_prefix` is `NULL`, re-apply the routing metadata migration in `nkz` and 
 
 ## Slots
 
-Edit `src/slots/index.ts` to register your components in host slots:
+This module registers no slots — `src/slots/index.ts` declares every slot
+key as `[]`, matching `manifest.json`'s `slots` object, and ships a
+standalone page (`src/App.tsx`, routed via `route` in `Module.tsx`'s
+`defineModule()`) instead of a viewer panel. To add one, register a
+component in `src/slots/index.ts`:
 
 ```ts
 import type { ModuleViewerSlots } from '@nekazari/sdk';
-import { ExampleSlot } from '../components/slots/ExampleSlot';
+import { MyPanel } from '../components/slots/MyPanel';
 
 const MODULE_ID = 'agent';
 
@@ -248,7 +252,7 @@ export const moduleSlots: ModuleViewerSlots = {
   'map-layer': [],
   'layer-toggle': [],
   'context-panel': [
-    { id: 'agent-context', moduleId: MODULE_ID, component: 'ExampleSlot', localComponent: ExampleSlot, priority: 10 },
+    { id: 'agent-context', moduleId: MODULE_ID, component: 'MyPanel', localComponent: MyPanel, priority: 10 },
   ],
   'bottom-panel': [],
   'entity-tree': [],
@@ -267,7 +271,7 @@ Available slot types:
 | `entity-tree` | Context menu in the entity tree |
 | `dashboard-widget` | Card in the tenant dashboard |
 
-Wrap every slot component's body in `<SlotShell>` from `@nekazari/viewer-kit` — it gives the panel chrome (title, accent scope, error boundary) the viewer expects; do not hand-roll that shell. See `src/components/slots/ExampleSlot.tsx`.
+Wrap every slot component's body in `<SlotShell>` from `@nekazari/viewer-kit` — it gives the panel chrome (title, accent scope, error boundary) the viewer expects; do not hand-roll that shell. Update `manifest.json`'s matching `slots` key to agree — the two must never diverge (a registered-but-undeclared slot, or vice versa, was fixed here before publication).
 
 ---
 
