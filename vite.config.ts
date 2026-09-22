@@ -2,11 +2,7 @@ import { defineConfig } from 'vite';
 import { nkzModulePreset } from '@nekazari/module-builder';
 import path from 'path';
 
-const MODULE_ID = 'agent';
-
 export default defineConfig(nkzModulePreset({
-  moduleId: MODULE_ID,
-  entry: './src/moduleEntry.ts',
   viteConfig: {
     resolve: {
       alias: { '@': path.resolve(__dirname, './src') },

@@ -1,6 +1,6 @@
 /**
  * Main page component for this module — lazily loaded as `MainPage` by
- * moduleEntry.ts's `defineModule({ main: MainPage })`. Part of the
+ * Module.tsx's `defineModule({ main: MainPage })`. Part of the
  * production bundle (not a dev-only shell); also rendered standalone by
  * `npm run dev` via src/main.tsx.
  */

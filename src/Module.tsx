@@ -1,15 +1,18 @@
 /**
  * Module entry point — canonical `defineModule()` pattern (Module Federation 2.0).
  *
- * @nekazari/module-builder's `nkzModulePreset()` exposes this file as `./Module`
- * and builds it into `dist/remoteEntry.js`. The host loads it at runtime via
- * `registerRemotes` + `loadRemote('agent/Module')`.
+ * `@nekazari/module-builder`'s `nkzModulePreset()` detects this file (the
+ * "modern" entry strategy — see `detectEntryStrategy` in module-builder),
+ * exposes it as `./Module`, and — critically — only in this strategy also
+ * emits `dist/manifest.json` (the NKZ data manifest api-gateway reads for
+ * CSP-of-data enforcement, and that entity-manager's publish endpoint
+ * requires to be present at all). The legacy `src/moduleEntry.ts` form this
+ * module used to ship never got that manifest emitted. `nkz-module-soil` and
+ * `nkz-module-cue` already use this same modern form.
  *
- * Do NOT call `window.__NKZ__.register()` here — that IIFE pattern no longer
- * works under Module Federation 2.0. Export the `defineModule()` result instead;
- * the builder + host runtime derive registration, slots and manifest from it.
- *
- * agent must match the `id` column in marketplace_modules exactly.
+ * The host loads it at runtime via `registerRemotes` + `loadRemote('agent/Module')`.
+ * agent must match the `id` column in marketplace_modules exactly, and the
+ * `id` below, and the repo's root `manifest.json#id`.
  */
 import { defineModule } from '@nekazari/module-kit';
 import { lazy } from 'react';
