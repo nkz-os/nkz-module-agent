@@ -39,9 +39,14 @@ export function LinkPanel() {
   const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/api/agent/links`, { credentials: 'include' });
-    if (!res.ok) return setError(true);
-    setLinks((await res.json()).links);
+    setError(false);
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/links`, { credentials: 'include' });
+      if (!res.ok) return setError(true);
+      setLinks((await res.json()).links);
+    } catch {
+      setError(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -50,23 +55,40 @@ export function LinkPanel() {
 
   const generate = async () => {
     setError(false);
-    const res = await fetch(`${API_BASE}/api/agent/link-tokens`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    if (!res.ok) return setError(true);
-    const body = await res.json();
-    setDeepLink(body.deep_link);
-    setExpiresIn(Math.round(body.expires_in / 60));
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/link-tokens`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        // A failed regenerate does not invalidate the previously minted link
+        // (it is still valid server-side), but its expiry text on screen is
+        // a snapshot, not a live countdown — leaving it up would read as a
+        // fresh result. Clear it so the error banner is the only thing shown.
+        setDeepLink(null);
+        return setError(true);
+      }
+      const body = await res.json();
+      setDeepLink(body.deep_link);
+      setExpiresIn(Math.round(body.expires_in / 60));
+    } catch {
+      setDeepLink(null);
+      setError(true);
+    }
   };
 
   const revoke = async (id: number) => {
-    const res = await fetch(`${API_BASE}/api/agent/links/${id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
-    if (!res.ok) return setError(true);
-    await load();
+    setError(false);
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/links/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) return setError(true);
+      await load();
+    } catch {
+      setError(true);
+    }
   };
 
   return (
