@@ -28,5 +28,13 @@ export default defineModule({
   accent: { base: '#3B82F6', soft: '#DBEAFE', strong: '#1D4ED8' },
   icon: 'puzzle',
   main: MainPage,
+  route: '/module/agent',
+  navigation: {
+    label: { es: 'Asistente por chat', en: 'Chat assistant' },
+    section: 'modules',
+    // ASSUMPTION: no ordering spec was provided for this module; picked a
+    // mid-range value consistent with other modules' priority (e.g. soil=40).
+    priority: 50,
+  },
   slots: moduleSlots as never,
 });

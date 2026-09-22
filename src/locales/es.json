@@ -7,5 +7,14 @@
     "user": "Usuario",
     "refresh": "Actualizar",
     "replaceHint": "Sustituye este componente por la funcionalidad de tu módulo."
-  }
+  },
+  "title": "Asistente por chat",
+  "intro": "Conecta tu cuenta de mensajería para consultar tus parcelas desde el móvil.",
+  "generate": "Generar enlace",
+  "openLink": "Abrir en Telegram",
+  "expiresIn": "El enlace caduca en {{minutes}} minutos",
+  "linked": "Cuentas vinculadas",
+  "none": "No hay ninguna cuenta vinculada.",
+  "revoke": "Desvincular",
+  "error": "No se ha podido completar la operación."
 }
