@@ -1,5 +1,9 @@
 import ast
+import asyncio
+import hmac as stdlib_hmac
 import inspect
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -326,9 +330,129 @@ def test_secret_comparison_uses_hmac_compare_digest():
     function's own docstring names "hmac.compare_digest" in prose, so a
     naive `"hmac.compare_digest" in source` string check would stay green
     even after the real comparison was swapped to `==`.
+
+    Also checked: the name `hmac` bound inside the webhook module IS the
+    real standard-library module object. The AST walk alone inspects the
+    call site's *syntax* only — the text `hmac.compare_digest(...)` — never
+    what `hmac` is actually bound to at runtime. A shim placed right after
+    the genuine `import hmac` (e.g. `hmac = _FakeHmacShim()`, whose own
+    `compare_digest` uses `==`) still produces a call that unparses to
+    "hmac.compare_digest", so the AST check alone passes while the
+    comparison is genuinely insecure. The identity check closes that.
+
+    KNOWN, ACCEPTED LIMITATION of inspecting syntax rather than behaviour:
+    if this comparison is ever moved into a small helper function (e.g.
+    `_secure_equal(a, b)`), this test will fail even though such a refactor
+    is perfectly safe — the call site would then read `_secure_equal(...)`,
+    not `hmac.compare_digest(...)`. That failure would mean THIS TEST needs
+    updating to inspect the new call site, not that the code regressed.
     """
+    assert webhook_module.hmac is stdlib_hmac
+
     tree = ast.parse(inspect.getsource(webhook_module._authorised))
     calls = {
         ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)
     }
     assert "hmac.compare_digest" in calls
+
+
+def test_reply_delivery_does_not_block_concurrent_acknowledgements(monkeypatch):
+    """FIX H: prove the real async reply path does not block the event loop.
+
+    Every other test that reaches send_reply monkeypatches send_reply itself,
+    so the real `async with httpx.AsyncClient(...)` body never runs anywhere
+    else in this suite — it proves send_reply is CALLED with the right
+    payload, not that the call doesn't block. The defect FIX B closed was a
+    synchronous httpx.post() eating up to 10s of the event loop's time,
+    stalling every OTHER delivery's acknowledgement in flight — exactly the
+    condition that invites the retries this whole design exists to avoid.
+
+    This exercises the real send_reply against a controlled transport and
+    proves concurrency at the event-loop level: two deliveries fire together
+    on a SHARED event loop — TestClient is used as a context manager so both
+    `client.post()` calls run their ASGI cycle on the SAME anyio portal
+    (Starlette hands out a fresh portal, and thus a fresh event loop, per
+    request UNLESS the client is entered as `with TestClient(app) as c:`,
+    which pins one portal for every request made inside the block) — each
+    triggering a reply-send that sleeps DELAY seconds. If that sleep is
+    genuinely async (`await asyncio.sleep`), the loop interleaves both tasks
+    and total wall time for both deliveries together stays close to ONE
+    DELAY. If it were a blocking call instead (`time.sleep`, standing in for
+    the old sync httpx.post — a real blocking socket call ties up the
+    thread identically), the second delivery's coroutine cannot even start
+    running until the first one's blocking call releases the single shared
+    event-loop thread, so total wall time climbs to close to TWO DELAYs.
+
+    Both httpx.post (sync) and httpx.AsyncClient (async) are patched so this
+    same test body proves RED against the pre-fix synchronous form and GREEN
+    against the current async form without editing the test in between.
+    """
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "s3cret-for-tests")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token-for-tests")
+    get_settings.cache_clear()
+
+    DELAY = 0.3
+
+    async def fake_claim(key):
+        return True
+
+    async def fake_handle(msg, trace_id):
+        from app.domain.messages import OutboundMessage
+        return OutboundMessage(text="ok")
+
+    def fake_sync_post(*args, **kwargs):
+        # Stand-in for the pre-fix synchronous httpx.post(): real blocking
+        # network I/O ties up the running thread for its duration exactly
+        # like time.sleep does, from the event loop's point of view.
+        time.sleep(DELAY)
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def post(self, *args, **kwargs):
+            await asyncio.sleep(DELAY)
+
+    monkeypatch.setattr("app.api.webhook.claim_update", fake_claim)
+    monkeypatch.setattr("app.api.webhook.handle_message", fake_handle)
+    monkeypatch.setattr("app.api.webhook.httpx.post", fake_sync_post)
+    monkeypatch.setattr("app.api.webhook.httpx.AsyncClient", FakeAsyncClient)
+
+    app = create_app()
+    results = {}
+
+    with TestClient(app) as shared_client:
+
+        def fire(key, update_id):
+            start = time.monotonic()
+            r = shared_client.post(
+                "/api/agent/webhook/telegram",
+                json=_update(update_id), headers={HEADER: "s3cret-for-tests"},
+            )
+            results[key] = r.status_code
+
+        overall_start = time.monotonic()
+        t1 = threading.Thread(target=fire, args=("a", 101))
+        t2 = threading.Thread(target=fire, args=("b", 102))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        overall_elapsed = time.monotonic() - overall_start
+
+    assert results["a"] == 200
+    assert results["b"] == 200
+    # Concurrent: ~1 DELAY total. Serialised: ~2 DELAYs total. The threshold
+    # sits clearly between the two, with margin for scheduling overhead.
+    assert overall_elapsed < DELAY * 1.6, (
+        f"acknowledgements serialised: {overall_elapsed:.2f}s wall time for "
+        f"two concurrent deliveries each carrying a {DELAY}s reply-send"
+    )
+
+    get_settings.cache_clear()

@@ -41,6 +41,15 @@ def _authorised(provided: str | None) -> bool:
     isn't 2xx). Encoding both sides removes the restriction entirely; the
     except is defense-in-depth so any future comparison error still resolves
     to "rejected", never to an unhandled 500.
+
+    PROHIBITED: do not add a length precheck (e.g. `if len(provided) !=
+    len(expected): return False`) before the compare_digest call, even as
+    an "optimisation" or a guard against calling compare_digest on mismatched
+    lengths. compare_digest is constant-time specifically so that a
+    mismatched length or byte position leaks nothing through timing; a
+    precheck like that reintroduces exactly the side channel it exists to
+    close (early return on impossible-length input observable via response
+    latency, byte-position leakage on longer-than-expected input).
     """
     expected = get_settings().telegram_webhook_secret
     if not expected:
