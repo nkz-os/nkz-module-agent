@@ -1,25 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-import pytest_asyncio
 
-from app.db import close_pool
 from app.identity import repository as repo
 from tests.conftest import requires_db
 
 pytestmark = [requires_db, pytest.mark.asyncio]
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _reset_process_pool():
-    # app.db.get_pool() is a process-wide singleton, but pytest-asyncio gives
-    # each test its own event loop. An asyncpg pool is bound to the loop that
-    # created it, so a pool left over from a previous test is unusable here.
-    # Reset it around every test, exactly like test_db.py does for the same
-    # reason.
-    await close_pool()
-    yield
-    await close_pool()
 
 
 def _future() -> datetime:

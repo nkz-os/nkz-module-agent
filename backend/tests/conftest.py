@@ -19,6 +19,8 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.db import close_pool
+
 # Authored here so the module's CI — which checks out only this repo — can
 # build a schema. The canonical numbered migration in the platform repo is a
 # byte-identical copy; test_schema_matches_platform_migration guards the drift.
@@ -28,6 +30,25 @@ requires_db = pytest.mark.skipif(
     not os.environ.get("POSTGRES_URL"),
     reason="POSTGRES_URL not set; start a PostgreSQL (see conftest docstring)",
 )
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_process_pool():
+    """Reset app.db's process-wide pool around every test.
+
+    app.db.get_pool() is a process-wide singleton by design: one pool for
+    the whole running service. But pytest-asyncio gives each test function
+    its own event loop, and an asyncpg pool is bound to the loop that
+    created it. Left alone, a pool created by one test's loop is unusable —
+    and produces confusing "attached to a different loop" / "event loop is
+    closed" errors — once a later test's loop tries to use it. Closing it
+    before and after every test forces get_pool() to lazily build a fresh,
+    loop-correct pool on demand. close_pool() is a no-op when no pool
+    exists yet, so tests that never touch the database are unaffected.
+    """
+    await close_pool()
+    yield
+    await close_pool()
 
 
 @pytest_asyncio.fixture
