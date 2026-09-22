@@ -1,13 +1,4 @@
 {
-  "example": {
-    "title": "Agent",
-    "loading": "Cargando…",
-    "authRequired": "Se requiere autenticación.",
-    "entity": "Entidad",
-    "user": "Usuario",
-    "refresh": "Actualizar",
-    "replaceHint": "Sustituye este componente por la funcionalidad de tu módulo."
-  },
   "title": "Asistente por chat",
   "intro": "Conecta tu cuenta de mensajería para consultar tus parcelas desde el móvil.",
   "generate": "Generar enlace",

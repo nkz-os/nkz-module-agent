@@ -1,13 +1,4 @@
 {
-  "example": {
-    "title": "Agent",
-    "loading": "Loading…",
-    "authRequired": "Authentication required.",
-    "entity": "Entity",
-    "user": "User",
-    "refresh": "Refresh",
-    "replaceHint": "Replace this component with your module's functionality."
-  },
   "title": "Chat assistant",
   "intro": "Connect your messaging account to ask about your parcels from your phone.",
   "generate": "Generate link",
