@@ -12,16 +12,11 @@ python-multipart>=0.0.32
 # X-Tenant-ID / X-User-ID / X-User-Roles headers (see app/middleware).
 nkz-platform-sdk>=0.8.4
 
-# Database (optional - uncomment if needed)
-# sqlalchemy>=2.0.0
+# Database — required. The identity/link chain and inbound-update dedupe
+# are backed by PostgreSQL; app/main.py's startup lifespan fails fast
+# without it (see app/config.py:require_postgres_url).
 asyncpg>=0.29.0
-# alembic>=1.13.0
 
-# Testing
-pytest>=9.0.3
-pytest-asyncio>=1.4.0
-httpx>=0.26.0
-
-# Development
-black>=24.1.0
-ruff>=0.15.17
+# Testing and dev-only tooling (pytest, black, ruff) live in
+# requirements-dev.txt, not here — this file is what the Dockerfile installs
+# into the production image.

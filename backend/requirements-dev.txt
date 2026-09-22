@@ -1,0 +1,9 @@
+# Dev/test dependencies, on top of requirements.txt. Installed by CI and for
+# local test runs — NEVER shipped into the production image (the Dockerfile
+# COPYs and installs only requirements.txt).
+-r requirements.txt
+
+pytest>=9.0.3
+pytest-asyncio>=1.4.0
+black>=24.1.0
+ruff>=0.15.17
