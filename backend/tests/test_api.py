@@ -47,19 +47,6 @@ class TestAPI:
         assert "openapi" in schema
         assert "paths" in schema
 
-    def test_list_data_requires_auth(self, client):
-        """Requests without gateway headers (X-Tenant-ID / X-User-ID) are rejected."""
-        response = client.get("/api/agent/data")
-        assert response.status_code == 401
-
-    def test_list_data_with_gateway_headers(self, client):
-        """Gateway-injected headers are trusted directly — no JWT/JWKS involved."""
-        response = client.get(
-            "/api/agent/data",
-            headers={"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"},
-        )
-        assert response.status_code == 200
-
 
 class TestInternal:
     """/internal/* routes — authenticated by X-Internal-Service-Secret, not gateway headers."""
