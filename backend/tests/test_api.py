@@ -48,6 +48,26 @@ class TestAPI:
         assert "paths" in schema
 
 
+class TestLinkRoutesRequireAuth:
+    """Guards the `Depends(get_current_user)` wiring on the link-management
+    routes, not their logic.
+
+    Every test in test_link_routes.py overrides get_current_user via
+    app.dependency_overrides — correct for testing route logic, but it
+    bypasses authentication entirely, so nothing there would catch a route
+    silently losing its auth dependency. This test drives the real,
+    unmodified app with no override: a request missing the gateway headers
+    never reaches route code, so a plain synchronous TestClient is fine here
+    (unlike test_link_routes.py, which needs the async client + db_pool to
+    share one event loop for real database work). Do not "consolidate" this
+    into the overridden tests — that removes exactly what it exists to catch.
+    """
+
+    def test_no_gateway_headers_is_rejected(self, client):
+        response = client.get("/api/agent/links")
+        assert response.status_code == 401
+
+
 class TestInternal:
     """/internal/* routes — authenticated by X-Internal-Service-Secret, not gateway headers."""
 
