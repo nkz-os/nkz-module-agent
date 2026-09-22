@@ -11,6 +11,8 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
+
 from app.config import get_settings
 from app.domain.session import SessionContext
 from app.identity import repository as repo
@@ -50,9 +52,20 @@ async def redeem_link_token(
         return None
 
     roles = tuple(identity["roles"])
-    await repo.upsert_active_link(
-        channel, channel_user_id, identity["tenant_id"], identity["user_id"], roles
-    )
+    try:
+        await repo.upsert_active_link(
+            channel, channel_user_id, identity["tenant_id"], identity["user_id"], roles
+        )
+    except asyncpg.UniqueViolationError:
+        # Another redemption for this same channel account committed first
+        # (the partial unique index allows only one active row per channel
+        # account). Retrying re-runs revoke-then-insert: last writer wins,
+        # exactly the semantics a manual relink already has. Without this,
+        # the loser would surface a raw database error after already
+        # burning its single-use token.
+        await repo.upsert_active_link(
+            channel, channel_user_id, identity["tenant_id"], identity["user_id"], roles
+        )
     return SessionContext(
         tenant_id=identity["tenant_id"],
         user_id=identity["user_id"],

@@ -1,11 +1,28 @@
+import asyncio
 import hashlib
 
+import asyncpg
 import pytest
 
+from app.identity import repository as repo
 from app.identity import service
 from tests.conftest import requires_db
 
 pytestmark = [requires_db, pytest.mark.asyncio]
+
+
+@pytest.fixture
+def clear_settings_cache():
+    """Clear get_settings()'s cache on teardown, even if the test fails.
+
+    A trailing cache_clear() on a test's last line never runs once an
+    earlier assertion raises, poisoning the cache for the rest of the
+    session.
+    """
+    yield
+    from app.config import get_settings
+
+    get_settings.cache_clear()
 
 
 async def test_created_token_is_never_stored_in_clear(db_pool):
@@ -25,15 +42,13 @@ async def test_token_fits_the_telegram_start_payload_limit(db_pool):
     assert token.replace("-", "").replace("_", "").isalnum()
 
 
-async def test_deep_link_uses_the_configured_bot(db_pool, monkeypatch):
+async def test_deep_link_uses_the_configured_bot(db_pool, monkeypatch, clear_settings_cache):
     from app.config import get_settings
     monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "somebot")
     get_settings.cache_clear()
 
     token, link = await service.create_link_token("tenant_a", "user_a", ())
     assert link == f"https://t.me/somebot?start={token}"
-
-    get_settings.cache_clear()
 
 
 async def test_redeem_produces_a_session_for_that_identity(db_pool):
@@ -71,3 +86,107 @@ async def test_resolve_session_after_relink_never_returns_the_old_tenant(db_pool
     ctx = await service.resolve_session("telegram", "42", "t-1")
     assert ctx is not None
     assert ctx.tenant_id == "tenant_b"
+
+
+async def test_two_tokens_for_the_same_identity_are_different(db_pool):
+    """A token derivable from tenant_id/user_id is a shared secret, not a
+    bearer credential — anyone who knows those two values could redeem it
+    without ever holding the minted token.
+    """
+    token_a, _ = await service.create_link_token("tenant_a", "user_a", ())
+    token_b, _ = await service.create_link_token("tenant_a", "user_a", ())
+
+    assert token_a != token_b
+
+    derived = hashlib.sha256(b"tenant_a:user_a").hexdigest()[:43]
+    assert token_a != derived
+    assert token_b != derived
+
+
+async def test_resolve_session_roles_are_a_tuple(db_pool):
+    """resolve_session runs once per inbound message — the hot path where
+    the frozen SessionContext must actually hold a tuple, not the list
+    the repository returns.
+    """
+    token, _ = await service.create_link_token("tenant_a", "user_a", ("Farmer", "Admin"))
+    await service.redeem_link_token(token, "telegram", "42")
+
+    ctx = await service.resolve_session("telegram", "42", "t-1")
+
+    assert ctx is not None
+    assert isinstance(ctx.roles, tuple)
+    assert ctx.roles == ("Farmer", "Admin")
+
+
+async def test_expired_token_is_refused(db_pool, monkeypatch, clear_settings_cache):
+    """Of unknown / expired / already-consumed / tampered, only 'expired'
+    was untested. A negative TTL also pins timezone-awareness: a naive
+    datetime.now() computing expires_at against a timestamptz column
+    drifts by the local UTC offset, which a one-second margin exposes.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("LINK_TOKEN_TTL_SECONDS", "-1")
+    get_settings.cache_clear()
+
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+
+    assert await service.redeem_link_token(token, "telegram", "42") is None
+
+
+async def test_redeem_is_single_use_under_concurrent_redemption(db_pool):
+    """Sequential redemption already proves single-use; this exercises the
+    same guarantee under a race, at the layer that actually calls the
+    repository's atomic single-use update.
+    """
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+
+    results = await asyncio.gather(
+        *(service.redeem_link_token(token, "telegram", str(n)) for n in range(10)),
+        return_exceptions=True,
+    )
+
+    exceptions = [r for r in results if isinstance(r, BaseException)]
+    assert exceptions == [], f"concurrent redemption raised: {exceptions!r}"
+
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1
+
+
+async def test_redeem_retries_once_on_a_concurrent_relink_race(db_pool, monkeypatch):
+    """Two concurrent redemptions for the same channel account can both pass
+    upsert_active_link's revoke step before either commits its insert; the
+    partial unique index then rejects the loser's INSERT with
+    UniqueViolationError. By the time this runs, the loser's token is
+    already consumed (single-use, atomic, and irreversible) — surfacing
+    that raw error would both 500 the caller and strand them with a burned
+    credential. redeem_link_token must retry once instead: the retry
+    re-runs revoke-then-insert, which is exactly what a manual relink
+    already does (last writer wins).
+
+    Real concurrent redemptions were tried here and found unreliable to
+    reproduce on demand and, past two simultaneous racers, capable of
+    exhausting a single retry regardless of implementation — this
+    deterministically forces the one-collision case the fix targets.
+    """
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+
+    real_upsert = repo.upsert_active_link
+    calls = {"count": 0}
+
+    async def flaky_upsert(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise asyncpg.UniqueViolationError("simulated concurrent relink")
+        return await real_upsert(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "upsert_active_link", flaky_upsert)
+
+    ctx = await service.redeem_link_token(token, "telegram", "42")
+
+    assert calls["count"] == 2, "must retry exactly once, not loop or give up"
+    assert ctx is not None
+    assert ctx.tenant_id == "tenant_a"
+
+    link = await repo.get_active_link("telegram", "42")
+    assert link is not None, "the retried insert must have actually landed"
