@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     # subscriptions. No hardcoded fallback: see require_postgres_url() below.
     postgres_url: str = ""
 
+    # Messaging channel (Telegram). All empty by default: a default that names
+    # our deployment silently breaks everyone else's install.
+    telegram_bot_token: str = ""
+    telegram_webhook_secret: str = ""
+    telegram_bot_username: str = ""
+
+    # Account linking
+    link_token_ttl_seconds: int = 600
+
+    # Inbound update dedupe retention
+    dedupe_ttl_hours: int = 24
+
     # Redis (for caching/celery - optional)
     # redis_url: str = ""
 
