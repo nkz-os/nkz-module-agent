@@ -88,19 +88,30 @@ async def test_resolve_session_after_relink_never_returns_the_old_tenant(db_pool
     assert ctx.tenant_id == "tenant_b"
 
 
-async def test_two_tokens_for_the_same_identity_are_different(db_pool):
-    """A token derivable from tenant_id/user_id is a shared secret, not a
-    bearer credential — anyone who knows those two values could redeem it
-    without ever holding the minted token.
+async def test_create_link_token_uses_the_csprng_and_only_the_csprng(db_pool, monkeypatch):
+    """Unpredictability is a property of the token's SOURCE, not observable
+    from any finite sample of its output: two tokens differing, or a
+    thousand tokens differing, is consistent with both a CSPRNG and a
+    sufficiently clever deterministic function of tenant_id/user_id (e.g.
+    a counter-based derivation) — no output-only assertion rules that out.
+    Patching the CSPRNG and asserting the minted token IS its return value
+    proves the token comes from nowhere else.
     """
-    token_a, _ = await service.create_link_token("tenant_a", "user_a", ())
-    token_b, _ = await service.create_link_token("tenant_a", "user_a", ())
+    monkeypatch.setattr(service.secrets, "token_urlsafe", lambda n: "sentinel-token")
 
-    assert token_a != token_b
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
 
-    derived = hashlib.sha256(b"tenant_a:user_a").hexdigest()[:43]
-    assert token_a != derived
-    assert token_b != derived
+    assert token == "sentinel-token"
+
+
+async def test_tokens_minted_for_the_same_identity_are_unique(db_pool):
+    """Alongside the CSPRNG-source assertion above: catches a degenerate or
+    seeded source that does call secrets.token_urlsafe but repeats.
+    """
+    tokens = {
+        (await service.create_link_token("tenant_a", "user_a", ()))[0] for _ in range(50)
+    }
+    assert len(tokens) == 50
 
 
 async def test_resolve_session_roles_are_a_tuple(db_pool):
@@ -120,9 +131,7 @@ async def test_resolve_session_roles_are_a_tuple(db_pool):
 
 async def test_expired_token_is_refused(db_pool, monkeypatch, clear_settings_cache):
     """Of unknown / expired / already-consumed / tampered, only 'expired'
-    was untested. A negative TTL also pins timezone-awareness: a naive
-    datetime.now() computing expires_at against a timestamptz column
-    drifts by the local UTC offset, which a one-second margin exposes.
+    was untested.
     """
     from app.config import get_settings
 
