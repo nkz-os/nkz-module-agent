@@ -316,6 +316,34 @@ def test_response_returns_before_the_work_runs(monkeypatch):
     get_settings.cache_clear()
 
 
+def _is_provenance_clean_return(value: ast.expr | None) -> bool:
+    """True if a `return` value is a bare literal or the compare_digest call.
+
+    Used by test_secret_comparison_uses_hmac_compare_digest to check RETURN
+    PROVENANCE, not just presence: AST presence of a call somewhere in the
+    function body is not the same as that call's result being what the
+    function actually returns. A decoy call
+    (`hmac.compare_digest(b"decoy", b"decoy")`, result discarded) followed by
+    `return provided == expected` still contains a node that unparses to
+    "hmac.compare_digest" — a presence-only check stays green while the real
+    decision is an insecure `==`. This walks every `return` in the function
+    and requires each one to be either a literal constant (the fail-closed
+    branches legitimately `return False`) or the compare_digest call itself,
+    optionally wrapped in `bool(...)`.
+    """
+    if isinstance(value, ast.Constant):
+        return True
+    if isinstance(value, ast.Call):
+        func_text = ast.unparse(value.func)
+        if func_text == "hmac.compare_digest":
+            return True
+        if func_text == "bool" and len(value.args) == 1:
+            inner = value.args[0]
+            if isinstance(inner, ast.Call) and ast.unparse(inner.func) == "hmac.compare_digest":
+                return True
+    return False
+
+
 def test_secret_comparison_uses_hmac_compare_digest():
     """Mechanism check, not behaviour.
 
@@ -340,20 +368,61 @@ def test_secret_comparison_uses_hmac_compare_digest():
     "hmac.compare_digest", so the AST check alone passes while the
     comparison is genuinely insecure. The identity check closes that.
 
-    KNOWN, ACCEPTED LIMITATION of inspecting syntax rather than behaviour:
-    if this comparison is ever moved into a small helper function (e.g.
-    `_secure_equal(a, b)`), this test will fail even though such a refactor
-    is perfectly safe — the call site would then read `_secure_equal(...)`,
-    not `hmac.compare_digest(...)`. That failure would mean THIS TEST needs
-    updating to inspect the new call site, not that the code regressed.
+    Also checked: RETURN PROVENANCE, not just call presence. "A call to
+    hmac.compare_digest appears somewhere in this function" is not the same
+    claim as "the function's answer IS that call's result, unconditionally".
+    Two shapes defeat presence-only checking:
+      - a debug/decoy bypass added before the real comparison
+        (`if provided.startswith("dbg-"): return provided[4:] == expected`) —
+        adds a `return` whose value is a `Compare` node, not touching
+        compare_digest at all;
+      - a decoy call with its result discarded
+        (`hmac.compare_digest(b"decoy", b"decoy")` as a bare expression
+        statement, followed by `return (provided or "") == expected`) — the
+        function body still contains a node that unparses to
+        "hmac.compare_digest", but no `return` actually uses it.
+    `_is_provenance_clean_return` walks every `ast.Return` in the function
+    and requires each one to be a literal constant (the fail-closed branches
+    legitimately `return False`) or the compare_digest call itself (bare, or
+    wrapped in `bool(...)`) — nothing else.
+
+    KNOWN, ACCEPTED LIMITATION, encoded deliberately narrow: this test
+    inspects `_authorised`'s OWN call site and its own `return` statements'
+    shapes via the AST — it does not run the code, and it does not follow
+    the comparison into a helper. If the comparison is ever moved into a
+    small helper function (e.g. `return _secure_equal(provided, expected)`),
+    this test will fail even though that refactor is perfectly safe, because
+    the call site would then read `_secure_equal(...)`, not
+    `hmac.compare_digest(...)`, and no `return` in `_authorised` would match
+    the allowed shapes any more. That failure means THIS TEST needs updating
+    to inspect the new call site, not that the code regressed. The reasoning
+    for this whole test's shape lives in `_authorised`'s own docstring too,
+    so the boundary survives independently of this file.
+
+    Reassigning `hmac.compare_digest` in place on the real standard-library
+    module object (`hmac.compare_digest = insecure_fn`, no rebinding of the
+    `hmac` name) is NOT covered by any check here — see the
+    DOCUMENTED-NOT-ENFORCED paragraph in `_authorised`'s own docstring for
+    why: it is runtime monkeypatching indistinguishable from the real thing
+    from this test's vantage point, ruled out of scope rather than chased.
     """
     assert webhook_module.hmac is stdlib_hmac
 
     tree = ast.parse(inspect.getsource(webhook_module._authorised))
+
     calls = {
         ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)
     }
     assert "hmac.compare_digest" in calls
+
+    returns = [node for node in ast.walk(tree) if isinstance(node, ast.Return)]
+    assert returns, "_authorised has no return statements to check"
+    for node in returns:
+        assert _is_provenance_clean_return(node.value), (
+            "a return statement in _authorised does not provably come from "
+            "hmac.compare_digest or a literal constant: "
+            f"`return {ast.unparse(node.value) if node.value is not None else None}`"
+        )
 
 
 def test_reply_delivery_does_not_block_concurrent_acknowledgements(monkeypatch):

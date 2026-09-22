@@ -50,6 +50,27 @@ def _authorised(provided: str | None) -> bool:
     precheck like that reintroduces exactly the side channel it exists to
     close (early return on impossible-length input observable via response
     latency, byte-position leakage on longer-than-expected input).
+
+    PROHIBITED, DOCUMENTED-NOT-ENFORCED: do not reassign `hmac.compare_digest`
+    in place on the real standard-library module object (e.g.
+    `hmac.compare_digest = insecure_fn`) anywhere in this process — that
+    would make this very function insecure without changing a single line
+    here. No test in this suite catches that: it is runtime monkeypatching
+    of a module every caller shares, indistinguishable from the outside from
+    the real thing, and it requires arbitrary code already executing in this
+    process at import/setup time — at which point the secret comparison has
+    stopped being the thing worth defending. This paragraph is the only
+    guard against it; there is no enforcement, only the documented boundary.
+
+    TEST COUPLING: the mechanism test for this function
+    (test_secret_comparison_uses_hmac_compare_digest) inspects THIS
+    function's own call site and each `return` statement's shape via the
+    AST — it does not run the code. Moving the comparison into a helper
+    (e.g. `return _secure_equal(provided, expected)`) would be a perfectly
+    safe refactor that nonetheless fails that test, because the call site
+    would no longer read `hmac.compare_digest(...)`. If that happens, update
+    the test to inspect the new call site — it is not a sign the refactor
+    broke anything.
     """
     expected = get_settings().telegram_webhook_secret
     if not expected:
