@@ -14,8 +14,9 @@ pytestmark = [requires_db, pytest.mark.asyncio]
 
 def _msg(text: str, user: str = "42") -> InboundMessage:
     return InboundMessage(
-        channel="telegram", channel_user_id=user, text=text, voice=None,
-        idempotency_key=f"telegram:{user}", received_at=datetime.now(timezone.utc),
+        channel="telegram", channel_user_id=user, conversation_id=user, text=text,
+        voice=None, idempotency_key=f"telegram:{user}",
+        received_at=datetime.now(timezone.utc),
     )
 
 

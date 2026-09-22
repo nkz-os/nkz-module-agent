@@ -27,6 +27,16 @@ class TelegramAdapter:
         if sender_id is None:
             return None
 
+        # The conversation to reply into. In a group this differs from the
+        # sender — identity must still follow `from`, delivery must follow
+        # `chat` (see InboundMessage's docstring).
+        chat = message.get("chat")
+        if not isinstance(chat, dict):
+            return None
+        chat_id = chat.get("id")
+        if chat_id is None:
+            return None
+
         update_id = raw.get("update_id")
         if update_id is None:
             return None
@@ -48,6 +58,7 @@ class TelegramAdapter:
         return InboundMessage(
             channel=CHANNEL,
             channel_user_id=str(sender_id),
+            conversation_id=str(chat_id),
             text=message.get("text"),
             voice=voice,
             idempotency_key=f"{CHANNEL}:{update_id}",

@@ -21,8 +21,17 @@ class VoiceRef:
 
 @dataclass(frozen=True)
 class InboundMessage:
+    """channel_user_id is the SENDER — the single source of identity, used to
+    resolve/link a tenant session. conversation_id is where the reply must be
+    delivered. They are the same value in a private chat but differ in a
+    group: identity must still follow the sender there, delivery must not —
+    replying to the sender instead of the conversation answers in the wrong
+    place, or fails outright if the bot cannot open a private chat with them.
+    """
+
     channel: str
     channel_user_id: str
+    conversation_id: str
     text: str | None
     voice: VoiceRef | None
     idempotency_key: str

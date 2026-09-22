@@ -129,7 +129,7 @@ async def process_update(raw: dict) -> None:
             msg.channel, msg.idempotency_key, trace_id,
         )
         reply = await handle_message(msg, trace_id)
-        await send_reply(adapter.render(reply, chat_id=msg.channel_user_id))
+        await send_reply(adapter.render(reply, chat_id=msg.conversation_id))
     except Exception:
         channel = msg.channel if msg is not None else "unparsed"
         key = msg.idempotency_key if msg is not None else "unparsed"

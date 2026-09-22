@@ -5,13 +5,18 @@ from datetime import datetime, timezone
 adapter = TelegramAdapter()
 
 
-def _text_update(text: str, update_id: int = 100, user_id: int = 42) -> dict:
+def _text_update(
+    text: str, update_id: int = 100, user_id: int = 42, chat_id: int = -100999
+) -> dict:
+    # chat_id defaults to a group id DIFFERENT from user_id on purpose: a
+    # fixture where sender and conversation coincide cannot catch a
+    # regression back to replying at the sender instead of the conversation.
     return {
         "update_id": update_id,
         "message": {
             "message_id": 1,
             "date": 1758499200,
-            "chat": {"id": user_id, "type": "private"},
+            "chat": {"id": chat_id, "type": "group"},
             "from": {"id": user_id, "is_bot": False},
             "text": text,
         },
@@ -27,6 +32,17 @@ def test_parse_extracts_identity_and_text():
     assert msg.voice is None
 
 
+def test_parse_carries_the_conversation_id_separately_from_the_sender():
+    """The conversation (delivery target) and the sender (identity) are
+    different fields, and — per the fixture default — different values.
+    """
+    msg = adapter.parse(_text_update("hola"))
+    assert msg is not None
+    assert msg.channel_user_id == "42"
+    assert msg.conversation_id == "-100999"
+    assert msg.conversation_id != msg.channel_user_id
+
+
 def test_idempotency_key_is_channel_scoped():
     msg = adapter.parse(_text_update("hola", update_id=7))
     assert msg is not None
@@ -40,6 +56,19 @@ def test_parse_reads_sender_not_chat():
     msg = adapter.parse(raw)
     assert msg is not None
     assert msg.channel_user_id == "42"
+    assert msg.conversation_id == "-999"
+
+
+def test_parse_ignores_updates_missing_chat():
+    raw = _text_update("hola")
+    del raw["message"]["chat"]
+    assert adapter.parse(raw) is None
+
+
+def test_parse_ignores_updates_with_non_dict_chat():
+    raw = _text_update("hola")
+    raw["message"]["chat"] = "not-a-dict"
+    assert adapter.parse(raw) is None
 
 
 def test_parse_voice_note_yields_a_reference():

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.api import webhook as webhook_module
 from app.config import get_settings
 from app.main import create_app
+from tests.conftest import requires_db
 
 HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
@@ -25,11 +26,15 @@ def client(monkeypatch):
 
 
 def _update(update_id: int = 1) -> dict:
+    # chat.id deliberately differs from from.id: a fixture where sender and
+    # conversation coincide cannot catch a reply routed to the sender
+    # instead of the conversation (see test_reply_is_delivered_to_the_
+    # conversation_not_the_sender below).
     return {
         "update_id": update_id,
         "message": {
             "message_id": 1, "date": 1758499200,
-            "chat": {"id": 42, "type": "private"},
+            "chat": {"id": -100999, "type": "group"},
             "from": {"id": 42, "is_bot": False},
             "text": "hola",
         },
@@ -275,15 +280,24 @@ def test_parse_failure_is_logged_and_does_not_propagate(client, monkeypatch, cap
     assert str(fixed_trace_id) in caplog.text
 
 
-def test_reply_is_delivered(client, monkeypatch):
-    """A successful turn must actually send a reply back to the channel."""
+def test_reply_is_delivered_to_the_conversation_not_the_sender(client, monkeypatch):
+    """A successful turn must reply into the conversation, not DM the sender.
+
+    _update()'s chat id (-100999) deliberately differs from the sender id
+    (42) so this catches a regression back to `chat_id=msg.channel_user_id`
+    — the exact defect this test guards. Identity must still resolve from
+    the sender: handle_message is asserted to have received channel_user_id
+    == "42" even though delivery goes elsewhere.
+    """
     sent = []
+    received = []
 
     async def fake_claim(key):
         return True
 
     async def fake_handle(msg, trace_id):
         from app.domain.messages import OutboundMessage
+        received.append(msg)
         return OutboundMessage(text="ok")
 
     async def fake_send_reply(payload):
@@ -299,7 +313,8 @@ def test_reply_is_delivered(client, monkeypatch):
     )
 
     assert r.status_code == 200
-    assert sent == [{"chat_id": "42", "text": "ok"}]
+    assert received and received[0].channel_user_id == "42"
+    assert sent == [{"chat_id": "-100999", "text": "ok"}]
 
 
 def test_response_returns_before_the_work_runs(monkeypatch):
@@ -457,8 +472,16 @@ def test_secret_comparison_uses_hmac_compare_digest():
         )
 
 
+@requires_db
 def test_reply_delivery_does_not_block_concurrent_acknowledgements(monkeypatch):
     """FIX H: prove the real async reply path does not block the event loop.
+
+    Needs a real PostgreSQL even though it never queries one: it enters
+    `with TestClient(app) as c:` to pin one event loop across both
+    concurrent requests (see below), which runs the ASGI lifespan for real —
+    and that now calls require_postgres_url() at startup (see app/main.py).
+    Every other test in this file builds TestClient without a `with` block,
+    so lifespan never runs and POSTGRES_URL is not needed there.
 
     Every other test that reaches send_reply monkeypatches send_reply itself,
     so the real `async with httpx.AsyncClient(...)` body never runs anywhere
