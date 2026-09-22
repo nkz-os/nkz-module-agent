@@ -27,9 +27,10 @@ export default defineModule({
   displayName: 'Agent',
   version: pkg.version,
   hostApiVersion: '^2.0.0',
-  description: 'Agent — Nekazari Platform Module',
+  description:
+    'Conversational assistant that links a tenant\'s messaging channel and answers questions about their parcels — Nekazari Platform Module',
   accent: { base: '#3B82F6', soft: '#DBEAFE', strong: '#1D4ED8' },
-  icon: 'puzzle',
+  icon: 'message-circle',
   main: MainPage,
   route: '/module/agent',
   navigation: {

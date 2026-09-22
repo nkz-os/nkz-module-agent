@@ -31,9 +31,8 @@ services:
       - INTERNAL_SERVICE_SECRET=dev-only-secret-change-me
       # Required — matches the `db` service below. app/main.py's startup
       # lifespan fails fast without this set (see app/config.py). Never used
-      # for time-series/telemetry (Orion-LD subscriptions only). Apply
-      # backend/tests/fixtures/schema.sql once against this database before
-      # exercising the identity/link routes or the webhook.
+      # for time-series/telemetry (Orion-LD subscriptions only). Schema is
+      # applied automatically on first boot — see the `db` service's volumes.
       - POSTGRES_URL=postgresql://module:modulepass@db:5432/module_db
       # Telegram channel adapter — set your own bot's values to exercise
       # /webhook/telegram locally (e.g. via ngrok). Left empty here is fine
@@ -65,6 +64,9 @@ services:
       - POSTGRES_DB=module_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Postgres only runs files here on an EMPTY data dir (first boot). Same
+      # schema as the platform's merged numbered migration — do not edit.
+      - ./backend/tests/fixtures/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U module"]
       interval: 10s

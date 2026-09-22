@@ -268,6 +268,16 @@ match; in a group they do not, and the account link is keyed on the sender —
 if it were keyed on the chat instead, every member of a group chat would
 resolve to whichever single account had linked that chat.
 
+Delivery follows a different identifier on purpose: `InboundMessage` also
+carries a `conversation_id`, taken from the message's **chat**
+(`message.chat.id`), and the webhook renders and sends the reply there, not
+to the sender. The two must not be conflated — identity has to stay pinned
+to the sender so the account link resolves correctly, while delivery has to
+follow the chat so the reply lands where the message came from; in a group
+those are different values, and using the sender for delivery answers in
+the wrong place (or fails outright if the bot cannot open a private chat
+with them).
+
 ## Forward note: the data manifest
 
 This module's root `manifest.json` declares no `data.entities` or

@@ -30,7 +30,12 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/agent-backend:v1.0.0
+          # Matches BACKEND_IMAGE in .github/workflows/build-push.yml
+          # (ghcr.io/${{ github.repository }}/agent-backend). `latest` is a
+          # placeholder for this reference manifest only — the real
+          # deployment pins an exact digest in a private gitops overlay, not
+          # here.
+          image: ghcr.io/nkz-os/nkz-module-agent/agent-backend:latest
           imagePullPolicy: Always
           ports:
             - name: http
