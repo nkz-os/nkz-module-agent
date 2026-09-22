@@ -1,6 +1,19 @@
 # nkz-module-agent
 
-Conversational assistant over messaging channels — a Nekazari platform module, scaffolded from `nkz-module-template`.
+Conversational assistant reachable from a messaging channel (Telegram today) —
+a Nekazari platform module.
+
+**Version 1 is read-only.** It links a chat account to a platform tenant and
+replies with a fixed placeholder once linked; it does not write to the
+platform's context broker, record field operations, or command machinery. A
+language model is not wired in yet on purpose. See
+[`docs/index.md`](docs/index.md) for the full design rationale: the two
+authentication surfaces (gateway-trusted management routes vs. a
+shared-secret public webhook), the tenant-isolation model, the account
+linking flow end to end, known limitations, and the test conventions that
+must not be relaxed. That page is also what publishes to the public
+documentation portal — read it before assuming this README is the whole
+story.
 
 Modules are built as **Module Federation 2.0 remotes** (`dist/remoteEntry.js` + `dist/mf-manifest.json` + `dist/assets/`) plus a `dist/manifest.json`. All are uploaded to MinIO and loaded at runtime by the host via `loadRemote()`. No build-time coupling to the host.
 
@@ -19,40 +32,49 @@ pnpm install
 ## Structure
 
 ```
-my-module/
+nkz-module-agent/
 ├── src/
-│   ├── moduleEntry.ts          # export default defineModule({...}) — MF2 entry
-│   ├── App.tsx                 # Main page component (lazy-loaded via moduleEntry.ts)
-│   ├── main.tsx                # Dev-only entry (Vite) — not part of the production bundle
-│   ├── i18n.ts                 # i18next resource bundle registration
-│   ├── locales/                # en/es filled in; ca/eu/fr/pt ship as {} skeletons
-│   ├── slots/index.ts           # Declare which host slots you occupy
-│   ├── components/slots/       # Slot React components (wrapped in <SlotShell>)
-│   ├── services/api.ts         # API client template (VITE_API_URL base)
-│   └── types/                  # TypeScript types
-├── backend/                    # FastAPI backend (optional, delete if unused)
+│   ├── Module.tsx               # export default defineModule({...}) — MF2 entry
+│   ├── App.tsx                  # Main page: SlotShell + LinkPanel
+│   ├── components/LinkPanel.tsx # Generate/list/revoke channel links
+│   ├── main.tsx                 # Dev-only entry (Vite) — not part of the production bundle
+│   ├── i18n.ts                  # i18next resource bundle registration
+│   ├── locales/                 # en/es filled in; ca/eu/fr/pt ship as {} skeletons
+│   └── slots/index.ts           # Declares which host slots this module occupies
+├── backend/
 │   └── app/
-│       ├── middleware/         # Gateway-header auth (nkz_platform_sdk.auth) —
-│       │                       # NO JWKS/JWT validation in the module.
-│       └── api/internal.py     # /internal/* — X-Internal-Service-Secret only
+│       ├── api/__init__.py      # Management routes — gateway-trusted, require_auth()
+│       ├── api/webhook.py       # Public channel webhook — shared-secret auth
+│       ├── api/internal.py      # /internal/* — X-Internal-Service-Secret only
+│       ├── channels/            # ChannelAdapter protocol + telegram.py
+│       ├── domain/              # SessionContext, InboundMessage/OutboundMessage
+│       ├── identity/            # Link-token and channel-link rules + SQL
+│       ├── dedupe/               # Inbound update idempotency claim
+│       ├── handlers.py          # One conversational turn
+│       └── middleware/          # Gateway-header auth (nkz_platform_sdk.auth) +
+│                                 # verify_internal_secret — NO JWKS/JWT here.
 ├── k8s/
-│   ├── backend-deployment.yaml # K8s Deployment + Service for backend
-│   └── registration.sql        # Insert/update marketplace_modules
-├── manifest.json                # NKZ metadata (routing, slots, data CSP) — edit by hand,
-│                                 # read at registration/publish time, NOT emitted into dist/
-├── vite.config.ts              # Uses @nekazari/module-builder preset (MF2)
+│   ├── backend-deployment.yaml  # K8s Deployment + Service for backend
+│   └── registration.sql         # Insert/update marketplace_modules
+├── docs/index.md                 # Design rationale — publishes to the docs portal
+├── manifest.json                 # NKZ metadata (routing, slots, data CSP) — edit by hand,
+│                                  # read at registration/publish time, NOT emitted into dist/
+├── vite.config.ts               # Uses @nekazari/module-builder preset (MF2)
 ├── package.json
-└── dist/                       # `pnpm run build:module` output
-    ├── remoteEntry.js          # Federation remote entry
-    ├── mf-manifest.json        # Federation manifest (shared deps + exposes)
-    └── assets/                 # Sync + async chunks
+└── dist/                        # `pnpm run build:module` output
+    ├── remoteEntry.js           # Federation remote entry
+    ├── mf-manifest.json         # Federation manifest (shared deps + exposes)
+    ├── manifest.json            # Data manifest emitted from defineModule() — see below
+    └── assets/                  # Sync + async chunks
 ```
 
 ---
 
 ## `defineModule()` — the single source of truth
 
-Edit `src/moduleEntry.ts`:
+The entry point is `src/Module.tsx` (not `moduleEntry.ts` — this module
+migrated to the "modern" entry strategy so the builder also emits
+`dist/manifest.json`; see the file's own header comment for why):
 
 ```ts
 import { defineModule } from '@nekazari/module-kit';
@@ -72,6 +94,8 @@ export default defineModule({
   accent: { base: '#3B82F6', soft: '#DBEAFE', strong: '#1D4ED8' },
   icon: 'puzzle',
   main: MainPage,
+  route: '/module/agent',
+  navigation: { label: { es: 'Asistente por chat', en: 'Chat assistant' }, section: 'modules', priority: 50 },
   slots: moduleSlots as never,
 });
 ```
@@ -95,7 +119,7 @@ const { selectedEntityId } = useViewer();
 const { isAuthenticated, user, getToken, getTenantId } = useAuth();
 ```
 
-For your own backend, `src/services/api.ts` wraps `NKZClient` (also from `@nekazari/sdk`) with the module's `VITE_API_URL` base — see that file for the pattern. There is **no `useConfig()` hook**; read the API base at build time via `import.meta.env.VITE_API_URL`.
+`src/services/api.ts` wraps `NKZClient` (also from `@nekazari/sdk`) with the module's `VITE_API_URL` base as a template pattern for calling this module's own backend — it is currently unused scaffolding; `LinkPanel.tsx` calls the backend with plain `fetch(..., { credentials: 'include' })` instead. There is **no `useConfig()` hook**; read the API base at build time via `import.meta.env.VITE_API_URL`.
 
 You never write raw `fetch`, never handle JWT cookies, never construct `Fiware-Service` headers by hand.
 
@@ -105,13 +129,13 @@ You never write raw `fetch`, never handle JWT cookies, never construct `Fiware-S
 
 ```bash
 pnpm run build:module
-# → dist/remoteEntry.js, dist/mf-manifest.json, dist/assets/*
+# → dist/remoteEntry.js, dist/mf-manifest.json, dist/manifest.json, dist/assets/*
 #   (Module Federation 2.0 remote — upload the whole dist/ directory to MinIO)
 ```
 
 The `@nekazari/module-builder@^2.0.3` preset (`nkzModulePreset()`) configures Module Federation 2.0 via `@module-federation/vite`:
 - **Singleton shared deps** — `react`, `react-dom`, `@nekazari/*`, `i18next`, `react-i18next` resolved by the host at runtime. Never bundle them.
-- **`src/moduleEntry.ts`** → `export default defineModule({...})` is the single entry point exposed as `./Module`. The build emits `dist/remoteEntry.js` + `dist/mf-manifest.json` + `dist/assets/*`. The root-level `manifest.json` is separate — it is hand-edited metadata (routing, slots, data CSP) consumed at registration/publish time, not emitted into `dist/`.
+- **`src/Module.tsx`** → `export default defineModule({...})` is the single entry point exposed as `./Module`. The build emits `dist/remoteEntry.js` + `dist/mf-manifest.json` + `dist/assets/*`, and — because this module uses the modern entry strategy — also `dist/manifest.json`, a data manifest generated from the `defineModule()` call (currently declares no `data.entities`/`data.timeseries`, correct for a v1 that reads no platform entities; see `docs/index.md`'s forward note). That generated file is distinct from the root-level `manifest.json`, which is separate, hand-edited marketplace metadata (routing, slots, pricing) consumed at registration/publish time.
 
 ---
 
@@ -126,6 +150,54 @@ For integration with a real backend, set `VITE_PROXY_TARGET=https://your-api-dom
 
 ---
 
+## Backend
+
+FastAPI app under `backend/app/`. Copy `env.example` to `.env` for local
+runs; see that file for the meaning of every variable (deliberately no real
+values — a default that names one deployment silently breaks every other
+install of this module).
+
+Two authentication surfaces exist and must stay separate — see
+[`docs/index.md`](docs/index.md) for the full rationale:
+
+- **Management routes** (`/link-tokens`, `/links`) trust `X-Tenant-ID` /
+  `X-User-ID` / `X-User-Roles` headers injected by the platform's
+  api-gateway, via `require_auth()`. They never validate a token themselves.
+- **The channel webhook** (`/webhook/telegram`) is not behind the gateway —
+  it authenticates with a shared secret (`TELEGRAM_WEBHOOK_SECRET`) compared
+  with `hmac.compare_digest`, and acknowledges immediately while processing
+  the update in the background.
+- **`/internal/*`** routes authenticate with `X-Internal-Service-Secret`
+  (`INTERNAL_SERVICE_SECRET`), for in-cluster callers only.
+
+### Tests
+
+The database-backed tests need a real PostgreSQL — the behaviour under test
+(partial unique indexes, atomic single-use token updates, `ON CONFLICT`
+races) does not exist in a mock:
+
+```bash
+docker run -d --name agent-test-db -p 55432:5432 \
+    -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test postgres:15
+export POSTGRES_URL=postgresql://postgres:test@localhost:55432/test
+
+cd backend
+pip install -r requirements.txt
+python -m pytest tests/ -v
+```
+
+Tests that need the database are marked and skipped automatically when
+`POSTGRES_URL` is unset. Read `backend/tests/conftest.py` before touching
+any fixture in that file — several of them (in particular the autouse
+connection-pool reset) exist for reasons that are not obvious from the code
+alone; the docstrings explain why. The same applies to the security tests in
+`backend/tests/test_webhook_auth.py` and the token test in
+`backend/tests/test_identity_service.py` — see "Test conventions that must
+not be relaxed" in `docs/index.md` before deleting anything there that looks
+redundant.
+
+---
+
 ## Deploy
 
 Push to `main`. That's it.
@@ -133,7 +205,7 @@ Push to `main`. That's it.
 The included `.github/workflows/build-push.yml` handles everything via GitHub Actions:
 
 1. **Tests** — frontend typecheck + backend tests
-2. **Build** — `pnpm run build:module` produces `dist/` (disabled by default in the raw template — the placeholder `agent` id fails the builder's kebab-case validator; remove the job's `if: false` once you've replaced placeholders)
+2. **Build** — `pnpm run build:module` produces `dist/`, gated by a `guard` job that derives readiness from `BACKEND_IMAGE` itself (fails closed if the module id/org is still a placeholder) rather than a hand-set `if: false` — already green for this module's real id (`agent`)
 3. **Publish** — uploads to immutable `modules/agent/<git-sha>/` on MinIO, flips the live pointer
 
 The publish step uses **GitHub OIDC** for authentication:
