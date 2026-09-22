@@ -31,41 +31,72 @@ adapter = TelegramAdapter()
 
 
 def _authorised(provided: str | None) -> bool:
-    """Constant-time comparison. An unset secret rejects everything (fail closed)."""
+    """Constant-time comparison. An unset secret rejects everything (fail closed).
+
+    Compared as utf-8 bytes, not str: hmac.compare_digest raises TypeError
+    when either operand is a non-ASCII str, so a raw non-ASCII header byte
+    would otherwise 500 (harmless from an attacker's side — it still fails
+    closed — but a non-ASCII TELEGRAM_WEBHOOK_SECRET would then 500 every
+    legitimate delivery forever, and the platform retries anything that
+    isn't 2xx). Encoding both sides removes the restriction entirely; the
+    except is defense-in-depth so any future comparison error still resolves
+    to "rejected", never to an unhandled 500.
+    """
     expected = get_settings().telegram_webhook_secret
     if not expected:
         logger.critical("webhook_secret_unset — rejecting all inbound updates")
         return False
-    return hmac.compare_digest(provided or "", expected)
+    try:
+        return hmac.compare_digest(
+            (provided or "").encode("utf-8"), expected.encode("utf-8")
+        )
+    except (TypeError, ValueError):
+        return False
 
 
-def send_reply(payload: dict) -> None:
+async def send_reply(payload: dict) -> None:
     token = get_settings().telegram_bot_token
     if not token:
         logger.critical("bot_token_unset — cannot deliver reply")
         return
-    httpx.post(
-        f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=10
-    )
+    async with httpx.AsyncClient(timeout=10) as http_client:
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage", json=payload
+        )
 
 
 async def process_update(raw: dict) -> None:
-    """Handle one update. Runs after the response has already been returned."""
+    """Handle one update. Runs after the response has already been returned.
+
+    Wrapped in a broad except: claim_update() has already committed by the
+    time handle_message() could raise, so the update is already marked
+    processed and the platform will never retry it — on a /start turn the
+    link token may already be burned too. Losing this exception silently
+    would mean losing the turn with no record it ever happened. There is no
+    ASGI caller left to see a re-raise (the response is already gone), so
+    this logs with the identifiers needed to find the lost turn and stops.
+    """
     trace_id = str(uuid.uuid4())
     msg = adapter.parse(raw)
     if msg is None:
         return
 
-    if not await claim_update(msg.idempotency_key):
-        logger.info("update_already_processed key=%s", msg.idempotency_key)
-        return
+    try:
+        if not await claim_update(msg.idempotency_key):
+            logger.info("update_already_processed key=%s", msg.idempotency_key)
+            return
 
-    logger.info(
-        "turn_start channel=%s key=%s trace_id=%s",
-        msg.channel, msg.idempotency_key, trace_id,
-    )
-    reply = await handle_message(msg, trace_id)
-    send_reply(adapter.render(reply, chat_id=msg.channel_user_id))
+        logger.info(
+            "turn_start channel=%s key=%s trace_id=%s",
+            msg.channel, msg.idempotency_key, trace_id,
+        )
+        reply = await handle_message(msg, trace_id)
+        await send_reply(adapter.render(reply, chat_id=msg.channel_user_id))
+    except Exception:
+        logger.exception(
+            "turn_failed channel=%s key=%s trace_id=%s",
+            msg.channel, msg.idempotency_key, trace_id,
+        )
 
 
 @router.post("/telegram")
