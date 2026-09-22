@@ -57,7 +57,28 @@ def test_parse_voice_note_yields_a_reference():
 
 
 def test_parse_ignores_updates_without_a_message():
+    """The platform sends many update kinds; this adapter handles only `message`."""
     assert adapter.parse({"update_id": 1, "edited_channel_post": {}}) is None
+    assert adapter.parse(
+        {"update_id": 2, "edited_message": {"message_id": 3, "text": "edit"}}
+    ) is None
+    assert adapter.parse(
+        {"update_id": 3, "callback_query": {"id": "cb1", "from": {"id": 42}}}
+    ) is None
+    assert adapter.parse({"update_id": 4}) is None
+
+
+def test_parse_ignores_update_missing_update_id():
+    raw = _text_update("hola")
+    del raw["update_id"]
+    assert adapter.parse(raw) is None
+
+
+def test_parse_ignores_voice_missing_file_id():
+    raw = _text_update("")
+    del raw["message"]["text"]
+    raw["message"]["voice"] = {"duration": 5, "mime_type": "audio/ogg"}
+    assert adapter.parse(raw) is None
 
 
 def test_render_targets_the_chat_and_carries_text():

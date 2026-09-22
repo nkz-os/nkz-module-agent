@@ -13,32 +13,44 @@ class TelegramAdapter:
     name = CHANNEL
 
     def parse(self, raw: dict) -> InboundMessage | None:
+        # Explicit early return for update kinds this adapter does not handle
+        # (edited posts, callback queries, ...). Becomes load-bearing the day
+        # parse() learns to handle a second kind, such as edited_message.
         message = raw.get("message")
-        if not message:
+        if not message or not isinstance(message, dict):
             return None
 
-        sender = message.get("from") or {}
+        sender = message.get("from")
+        if not isinstance(sender, dict):
+            return None
         sender_id = sender.get("id")
         if sender_id is None:
             return None
 
+        update_id = raw.get("update_id")
+        if update_id is None:
+            return None
+
         voice_raw = message.get("voice")
-        voice = (
-            VoiceRef(
-                file_id=voice_raw["file_id"],
+        voice = None
+        if voice_raw:
+            if not isinstance(voice_raw, dict):
+                return None
+            file_id = voice_raw.get("file_id")
+            if file_id is None:
+                return None
+            voice = VoiceRef(
+                file_id=file_id,
                 duration_s=int(voice_raw.get("duration", 0)),
                 mime_type=voice_raw.get("mime_type", "audio/ogg"),
             )
-            if voice_raw
-            else None
-        )
 
         return InboundMessage(
             channel=CHANNEL,
             channel_user_id=str(sender_id),
             text=message.get("text"),
             voice=voice,
-            idempotency_key=f"{CHANNEL}:{raw['update_id']}",
+            idempotency_key=f"{CHANNEL}:{update_id}",
             received_at=datetime.fromtimestamp(
                 message.get("date", 0), tz=timezone.utc
             ),
