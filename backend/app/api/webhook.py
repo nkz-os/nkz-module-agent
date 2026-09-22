@@ -98,20 +98,28 @@ async def send_reply(payload: dict) -> None:
 async def process_update(raw: dict) -> None:
     """Handle one update. Runs after the response has already been returned.
 
-    Wrapped in a broad except: claim_update() has already committed by the
-    time handle_message() could raise, so the update is already marked
-    processed and the platform will never retry it — on a /start turn the
-    link token may already be burned too. Losing this exception silently
-    would mean losing the turn with no record it ever happened. There is no
-    ASGI caller left to see a re-raise (the response is already gone), so
-    this logs with the identifiers needed to find the lost turn and stops.
+    Wrapped in a broad except that also covers adapter.parse() itself: a
+    malformed update can make the adapter raise (e.g. a non-numeric `date`
+    field reaching datetime.fromtimestamp), not just return None for a kind
+    it doesn't handle. By the time any of this runs, claim_update() may
+    already have committed and the platform has already received its 200 —
+    nothing retries, so losing an exception here would mean losing the turn
+    with no record it ever happened. If parse() itself is what raised, `msg`
+    never gets assigned, so the log below falls back to fixed placeholder
+    constants instead of reading anything off it — never anything derived
+    from the incoming payload, which is reachable by anyone holding the
+    shared secret (the log-injection rule from the auth-rejection path
+    applies here too).
     """
     trace_id = str(uuid.uuid4())
-    msg = adapter.parse(raw)
-    if msg is None:
-        return
-
+    msg = None
     try:
+        msg = adapter.parse(raw)
+        if msg is None:
+            # A kind the adapter doesn't handle — a normal outcome, not a
+            # failure. Must not fall through to the failure log below.
+            return
+
         if not await claim_update(msg.idempotency_key):
             logger.info("update_already_processed key=%s", msg.idempotency_key)
             return
@@ -123,9 +131,11 @@ async def process_update(raw: dict) -> None:
         reply = await handle_message(msg, trace_id)
         await send_reply(adapter.render(reply, chat_id=msg.channel_user_id))
     except Exception:
+        channel = msg.channel if msg is not None else "unparsed"
+        key = msg.idempotency_key if msg is not None else "unparsed"
         logger.exception(
             "turn_failed channel=%s key=%s trace_id=%s",
-            msg.channel, msg.idempotency_key, trace_id,
+            channel, key, trace_id,
         )
 
 

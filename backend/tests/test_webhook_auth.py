@@ -4,6 +4,7 @@ import hmac as stdlib_hmac
 import inspect
 import threading
 import time
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -241,6 +242,37 @@ def test_failed_turn_is_logged_and_does_not_propagate(client, monkeypatch, caplo
     assert r.status_code == 200
     assert "turn_failed" in caplog.text
     assert "telegram:1" in caplog.text
+
+
+def test_parse_failure_is_logged_and_does_not_propagate(client, monkeypatch, caplog):
+    """A raising adapter.parse() must not vanish silently.
+
+    This is exactly the case the FIX C except block exists for: a malformed
+    update can make the adapter raise (e.g. a non-numeric `date` field
+    reaching datetime.fromtimestamp), not just return None for a kind it
+    doesn't handle. By the time it does, the platform has already received
+    its 200 — nothing retries — so losing this exception would lose the
+    turn with zero record it ever existed. `msg` is never assigned on this
+    path, so this also proves the failure log's placeholder fallback
+    doesn't itself blow up trying to read attributes off a None msg.
+    """
+    def raising_parse(raw):
+        raise TypeError("boom: non-numeric date")
+
+    fixed_trace_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+    monkeypatch.setattr("app.api.webhook.adapter.parse", raising_parse)
+    monkeypatch.setattr("app.api.webhook.uuid.uuid4", lambda: fixed_trace_id)
+
+    with caplog.at_level("ERROR"):
+        r = client.post(
+            "/api/agent/webhook/telegram",
+            json=_update(), headers={HEADER: "s3cret-for-tests"},
+        )
+
+    assert r.status_code == 200
+    assert "turn_failed" in caplog.text
+    assert str(fixed_trace_id) in caplog.text
 
 
 def test_reply_is_delivered(client, monkeypatch):
