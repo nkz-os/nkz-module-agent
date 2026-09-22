@@ -83,6 +83,7 @@ async def resolve_session(
     link = await repo.get_active_link(channel, channel_user_id)
     if link is None:
         return None
+    await repo.touch_last_seen(channel, channel_user_id)
     return SessionContext(
         tenant_id=link["tenant_id"],
         user_id=link["user_id"],

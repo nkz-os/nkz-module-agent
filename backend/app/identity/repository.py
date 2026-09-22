@@ -92,6 +92,23 @@ async def get_active_link(channel: str, channel_user_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def touch_last_seen(channel: str, channel_user_id: str) -> None:
+    """Stamp last_seen_at on the active link for this channel account.
+
+    Called once per resolved session (see identity/service.py:resolve_session)
+    — not on link creation, which already has linked_at for that.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE agent_channel_links
+           SET last_seen_at = now()
+         WHERE channel = $1 AND channel_user_id = $2 AND status = 'active'
+        """,
+        channel, channel_user_id,
+    )
+
+
 async def revoke_link(link_id: int, tenant_id: str) -> bool:
     """Revoke a link. Scoped by tenant so one tenant cannot revoke another's."""
     pool = await get_pool()

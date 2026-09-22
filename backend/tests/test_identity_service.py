@@ -76,6 +76,33 @@ async def test_resolve_session_returns_none_for_unlinked_account(db_pool):
     assert await service.resolve_session("telegram", "999", "t-1") is None
 
 
+async def test_resolve_session_stamps_last_seen_at(db_pool):
+    """The column exists, is selected and is exposed by the API — this is
+    what actually writes it. Without it, every link's last_seen_at stays
+    NULL forever regardless of how many messages the account sends.
+    """
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await service.redeem_link_token(token, "telegram", "42")
+
+    link = await repo.get_active_link("telegram", "42")
+    assert link is not None
+
+    async with db_pool.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT last_seen_at FROM agent_channel_links WHERE id = $1", link["id"]
+        )
+    assert before is None, "must not be set merely by linking"
+
+    ctx = await service.resolve_session("telegram", "42", "t-1")
+    assert ctx is not None
+
+    async with db_pool.acquire() as conn:
+        after = await conn.fetchval(
+            "SELECT last_seen_at FROM agent_channel_links WHERE id = $1", link["id"]
+        )
+    assert after is not None
+
+
 async def test_resolve_session_after_relink_never_returns_the_old_tenant(db_pool):
     t1, _ = await service.create_link_token("tenant_a", "user_a", ())
     await service.redeem_link_token(t1, "telegram", "42")
