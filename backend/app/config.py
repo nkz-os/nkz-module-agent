@@ -27,10 +27,11 @@ class Settings(BaseSettings):
     # `internal-service-secret` (org-level) in production. No default.
     internal_service_secret: str = ""
 
-    # Database (optional). Only set this if your module writes admin/metadata
-    # to PostgreSQL directly (tenants, credentials, non-timeseries state) —
+    # Database (required). The identity/link chain and update dedupe write
+    # admin/metadata here (tenants, credentials, non-timeseries state) —
     # NEVER for time-series/telemetry, which must flow through Orion-LD
-    # subscriptions. No hardcoded fallback: see require_postgres_url() below.
+    # subscriptions. No hardcoded fallback: see require_postgres_url() below,
+    # called from app.main's lifespan at startup.
     postgres_url: str = ""
 
     # Messaging channel (Telegram). All empty by default: a default that names
@@ -65,9 +66,10 @@ def require_postgres_url() -> str:
 
     Call this from any code path that opens a PostgreSQL connection — do NOT
     hardcode a fallback DSN (platform rule: "POSTGRES_URL is MANDATORY —
-    services must fail at startup if not set"). Not called anywhere by
-    default: this template is Orion-LD-only out of the box. Wire it in once
-    your module actually needs direct PostgreSQL access.
+    services must fail at startup if not set"). Called from app.main's
+    lifespan at process startup (so a misconfigured deployment dies loudly
+    instead of accepting traffic) and again from app.db.get_pool() as
+    defense in depth.
     """
     settings = get_settings()
     if not settings.postgres_url:

@@ -65,14 +65,38 @@ spec:
                   name: internal-service-secret
                   key: secret
                   optional: true
-          # Database (only if this module writes admin/metadata to PostgreSQL —
-          # NEVER for time-series/telemetry, which flows through Orion-LD
-          # subscriptions only. See app/config.py:require_postgres_url.)
-          # - name: POSTGRES_URL
-          #   valueFrom:
-          #     secretKeyRef:
-          #       name: postgresql-secret
-          #       key: connection-string
+            # Admin/metadata store (channel links, link tokens, update
+            # dedupe) — NEVER time-series, which flows through Orion-LD
+            # subscriptions only. Core dependency: app/main.py's lifespan
+            # calls require_postgres_url() and refuses to start without it
+            # (see app/config.py), so a missing/renamed secret here fails
+            # the deployment loudly instead of a pod that reports healthy
+            # and silently drops every turn.
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-url
+            # Telegram channel adapter. Peripheral, not core: unset here
+            # fails closed per-request (webhook 401s, replies are skipped
+            # and logged CRITICAL) rather than crashing the pod — see
+            # app/api/webhook.py (_authorised / send_reply).
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-telegram-secret
+                  key: bot-token
+                  optional: true
+            - name: TELEGRAM_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: agent-telegram-secret
+                  key: webhook-secret
+                  optional: true
+            # Not a secret (a public @username), but instance-specific — the
+            # production value lives in the ConfigMap overlay.
+            - name: TELEGRAM_BOT_USERNAME
+              value: "your_bot_username"
           resources:
             requests:
               memory: "128Mi"
