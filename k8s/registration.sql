@@ -22,7 +22,7 @@ INSERT INTO marketplace_modules (
     'agent', './Module', '/modules/agent/mf-manifest.json',
     '1.0.0', 'nkz-os', '/agent', 'Agent',
     false, true, 0,
-    ARRAY['Farmer','TenantAdmin','PlatformAdmin'],
+    ARRAY['Farmer','TechnicalConsultant','TenantAdmin','PlatformAdmin'],
     '{"icon": "💬", "color": "#3B82F6", "description_i18n": {"es": "Asistente conversacional por canales de mensajería", "en": "Conversational assistant over messaging channels"}}'::jsonb
 ) ON CONFLICT (id) DO UPDATE SET
     display_name     = EXCLUDED.display_name,
@@ -30,5 +30,6 @@ INSERT INTO marketplace_modules (
     scope            = EXCLUDED.scope,
     exposed_module   = EXCLUDED.exposed_module,
     remote_entry_url = EXCLUDED.remote_entry_url,
+    required_roles   = EXCLUDED.required_roles,
     is_active        = true,
     updated_at       = NOW();

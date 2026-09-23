@@ -31,8 +31,13 @@ export default defineModule({
     'Conversational assistant that links a tenant\'s messaging channel and answers questions about their parcels — Nekazari Platform Module',
   accent: { base: '#3B82F6', soft: '#DBEAFE', strong: '#1D4ED8' },
   icon: 'message-circle',
+  // Authoritative at runtime: entity-manager's publish endpoint upserts
+  // marketplace_modules from THIS manifest, and defaults requiredRoles to
+  // ['Farmer'] when absent — so omitting it silently narrows access on every
+  // publish, overwriting whatever the seed SQL registered.
+  requiredRoles: ['Farmer', 'TechnicalConsultant', 'TenantAdmin', 'PlatformAdmin'],
   main: MainPage,
-  route: '/module/agent',
+  route: '/agent',
   navigation: {
     label: { es: 'Asistente por chat', en: 'Chat assistant' },
     section: 'modules',
