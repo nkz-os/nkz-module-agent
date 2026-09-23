@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "Agent"
     app_version: str = "1.0.0"
     debug: bool = False
+    log_level: str = "INFO"  # Level for this module's own loggers; see app.main.configure_logging
 
     # API
     api_prefix: str = "/api/agent"

@@ -17,6 +17,31 @@ from app.api.webhook import router as webhook_router
 logger = logging.getLogger(__name__)
 
 
+def configure_logging(level: str) -> None:
+    """Attach a handler+formatter to this module's own logger namespace.
+
+    Uvicorn's dictConfig sets up "uvicorn"/"uvicorn.error"/"uvicorn.access"
+    only, with propagate=False, and never touches the root logger or ours.
+    Left alone, every "app.*" logger (this file, app.api.webhook,
+    app.handlers, ...) has no level and no handler: INFO records are
+    dropped silently by the logging module's defaults, while ERROR/CRITICAL
+    still reach Python's last-resort handler — so the module looks healthy
+    right up until it logs a traceback. Configuring the "app" namespace
+    specifically (not the root logger) fixes that without touching
+    uvicorn's own loggers or its access log. Guarded so repeated calls
+    (e.g. create_app() invoked once per test) don't pile up handlers and
+    print every line twice.
+    """
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(level.upper())
+    if not app_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"
+        ))
+        app_logger.addHandler(handler)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown events.
@@ -43,7 +68,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Application factory."""
     settings = get_settings()
-    
+    configure_logging(settings.log_level)
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
