@@ -16,6 +16,7 @@ original reason rather than re-evaluating its own counter.
 from __future__ import annotations
 
 import time
+from typing import Callable
 
 
 class BudgetExhausted(Exception):
@@ -31,11 +32,16 @@ class TurnBudget:
         max_tool_calls: int,
         max_tokens: int,
         timeout_s: float,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._max_iterations = max_iterations
         self._max_tool_calls = max_tool_calls
         self._max_tokens = max_tokens
         self._timeout_s = timeout_s
+        # Monotonic by default: NTP steps and DST changes must not extend or
+        # truncate a turn. Injectable only so tests can move the clock
+        # deterministically instead of sleeping past a real deadline.
+        self._clock = clock
         self._iterations = 0
         self._tool_calls = 0
         self._tokens = 0
@@ -45,7 +51,7 @@ class TurnBudget:
         self._exhausted_reason: str | None = None
 
     def start(self) -> None:
-        self._started_at = time.monotonic()
+        self._started_at = self._clock()
 
     @property
     def spent_tokens(self) -> int:
@@ -83,5 +89,5 @@ class TurnBudget:
         # refuse every request.
         if self._started_at is None:
             return
-        if time.monotonic() - self._started_at > self._timeout_s:
+        if self._clock() - self._started_at > self._timeout_s:
             self._trip("timeout")

@@ -31,6 +31,17 @@ def test_tokens_accumulate_and_are_capped():
     assert e.value.reason == "tokens"
 
 
+def test_tokens_exactly_at_ceiling_succeeds_one_more_raises():
+    """Boundary check on the token limit itself: `>` vs `>=` at the ceiling.
+    Spending exactly up to max_tokens must succeed; one token past must not."""
+    b = TurnBudget(max_iterations=9, max_tool_calls=9, max_tokens=100, timeout_s=99)
+    b.spend_tokens(60, 40)  # exactly 100 — the last permitted spend
+    assert b.spent_tokens == 100
+    with pytest.raises(BudgetExhausted) as e:
+        b.spend_tokens(1, 0)
+    assert e.value.reason == "tokens"
+
+
 def test_deadline_trips_after_timeout():
     b = TurnBudget(max_iterations=9, max_tool_calls=9, max_tokens=9999, timeout_s=0)
     b.start()
@@ -44,6 +55,41 @@ def test_deadline_does_not_trip_before_start():
     """A budget that trips before the turn begins would refuse every request."""
     b = TurnBudget(max_iterations=9, max_tool_calls=9, max_tokens=9999, timeout_s=0)
     b.check_deadline()  # must not raise
+
+
+def test_deadline_boundary_with_injected_clock():
+    """Boundary check on the deadline itself (`>` vs `>=`), driven by an
+    injected clock so it is exact and does not depend on real elapsed time —
+    a real `timeout_s=0` test cannot distinguish `>` from `>=` at all, and a
+    real sleep near a nonzero timeout would be slow and occasionally flaky.
+    Exactly at the deadline must not raise; one tick past must raise."""
+    now = [1_000.0]
+
+    def fake_clock() -> float:
+        return now[0]
+
+    b = TurnBudget(
+        max_iterations=9, max_tool_calls=9, max_tokens=9999, timeout_s=10,
+        clock=fake_clock,
+    )
+    b.start()  # started_at = 1000.0
+
+    now[0] = 1010.0  # elapsed == timeout_s exactly
+    b.check_deadline()  # must not raise
+
+    now[0] = 1010.001  # one tick past the deadline
+    with pytest.raises(BudgetExhausted) as e:
+        b.check_deadline()
+    assert e.value.reason == "timeout"
+
+
+def test_default_clock_is_monotonic_by_identity():
+    """The deadline must use a monotonic clock so an NTP step or DST change
+    can't extend or truncate a turn. Checked by identity, not by name or
+    string — a same-named substitute (e.g. a wrapper calling time.time())
+    would pass a name-based check while breaking the actual guarantee."""
+    b = TurnBudget(max_iterations=9, max_tool_calls=9, max_tokens=9999, timeout_s=99)
+    assert b._clock is time.monotonic
 
 
 def test_exhaustion_names_which_limit():
