@@ -25,6 +25,7 @@ from app.db import close_pool
 # build a schema. The canonical numbered migration in the platform repo is a
 # byte-identical copy; test_schema_matches_platform_migration guards the drift.
 SCHEMA = pathlib.Path(__file__).resolve().parent / "fixtures" / "schema.sql"
+SCHEMA_102 = pathlib.Path(__file__).resolve().parent / "fixtures" / "schema_102.sql"
 
 requires_db = pytest.mark.skipif(
     not os.environ.get("POSTGRES_URL"),
@@ -56,8 +57,10 @@ async def db_pool():
     pool = await asyncpg.create_pool(os.environ["POSTGRES_URL"])
     async with pool.acquire() as conn:
         await conn.execute(SCHEMA.read_text())
+        await conn.execute(SCHEMA_102.read_text())
         await conn.execute(
-            "TRUNCATE agent_channel_links, agent_link_tokens, agent_processed_updates"
+            "TRUNCATE agent_channel_links, agent_link_tokens, agent_processed_updates, "
+            "agent_turn_audit"
         )
     yield pool
     await pool.close()
