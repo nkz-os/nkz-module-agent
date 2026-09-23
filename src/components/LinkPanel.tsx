@@ -15,12 +15,20 @@
  *     declarations (would fail `tsc --noEmit` under `strict`) and hardcodes
  *     non-token green colors that clash with this module's accent.
  * Every class below was confirmed present in the platform host's own source
- * (`nkz/apps/host/src`), so Tailwind emits it in the host bundle even though
- * this module's source is never scanned; the `nkz-*` design-token classes
- * are additionally covered by the host's `safelist: [{ pattern: /-nkz-/ }]`.
+ * (`nkz/apps/host/src`, plus `packages/{ui-kit,viewer-kit}/src` — the same
+ * three trees the host's own `tailwind.config.js` `content` scans), so
+ * Tailwind emits it in the host bundle even though this module's source is
+ * never scanned; the `nkz-*` design-token classes are additionally covered
+ * by the host's `safelist: [{ pattern: /-nkz-/ }]`.
+ *
+ * QR code: rendered with `qrcode-generator` (MIT, zero dependencies) — it
+ * only computes the module matrix; this component draws that matrix as a
+ * single inline `<path>` (no canvas, no dangerouslySetInnerHTML). Not a
+ * federation shared singleton, so it bundles into this module's own chunk.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import qrcode from 'qrcode-generator';
 
 const API_BASE = import.meta.env?.VITE_API_URL || '';
 
@@ -37,6 +45,39 @@ export function LinkPanel() {
   const [deepLink, setDeepLink] = useState<string | null>(null);
   const [expiresIn, setExpiresIn] = useState(0);
   const [error, setError] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // The API deliberately never returns a raw `token` field (see
+  // test_response_never_exposes_the_raw_token_field in the backend) — the
+  // token only ever travels inside the deep link's `start` query param.
+  // Reading it back out here doesn't expose anything new to the page: the
+  // full URL, token included, is already in `deepLink`.
+  const token = useMemo(() => {
+    if (!deepLink) return null;
+    try {
+      return new URL(deepLink).searchParams.get('start');
+    } catch {
+      return null;
+    }
+  }, [deepLink]);
+
+  // Draws the QR as one inline SVG <path> (no canvas, no innerHTML) so a
+  // desktop user with no messaging app installed can scan it from a phone
+  // instead of hitting a dead deep link — the failure this panel exists to fix.
+  const qrPath = useMemo(() => {
+    if (!deepLink) return null;
+    const qr = qrcode(0, 'M');
+    qr.addData(deepLink);
+    qr.make();
+    const count = qr.getModuleCount();
+    let d = '';
+    for (let row = 0; row < count; row++) {
+      for (let col = 0; col < count; col++) {
+        if (qr.isDark(row, col)) d += `M${col},${row}h1v1h-1z`;
+      }
+    }
+    return { d, count };
+  }, [deepLink]);
 
   const load = useCallback(async () => {
     setError(false);
@@ -55,6 +96,7 @@ export function LinkPanel() {
 
   const generate = async () => {
     setError(false);
+    setCopied(false);
     try {
       const res = await fetch(`${API_BASE}/api/agent/link-tokens`, {
         method: 'POST',
@@ -77,6 +119,16 @@ export function LinkPanel() {
     }
   };
 
+  const copyToken = async () => {
+    if (!token) return;
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopied(true);
+    } catch {
+      setError(true);
+    }
+  };
+
   const revoke = async (id: number) => {
     setError(false);
     try {
@@ -94,6 +146,7 @@ export function LinkPanel() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-nkz-text-secondary">{t('intro')}</p>
+      <p className="text-nkz-text-secondary text-sm">{t('howItWorks')}</p>
 
       <button
         className="self-start bg-nkz-accent-base text-nkz-text-on-accent rounded-nkz-md px-4 py-2 text-nkz-sm font-medium"
@@ -103,15 +156,50 @@ export function LinkPanel() {
       </button>
 
       {deepLink && (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-4">
+          {qrPath && (
+            <div className="flex flex-col gap-1">
+              <span className="text-nkz-text-muted text-xs">{t('scanQr')}</span>
+              <div className="inline-block self-start bg-white p-3 rounded-md">
+                <svg
+                  viewBox={`0 0 ${qrPath.count} ${qrPath.count}`}
+                  width={160}
+                  height={160}
+                  role="img"
+                  aria-label={t('qrAlt')}
+                >
+                  <path d={qrPath.d} fill="#000000" />
+                </svg>
+              </div>
+            </div>
+          )}
+
           <a
             href={deepLink}
             target="_blank"
             rel="noreferrer"
-            className="text-nkz-accent-base underline text-nkz-sm"
+            className="self-start text-nkz-accent-base underline text-nkz-sm"
           >
             {t('openLink')}
           </a>
+
+          {token && (
+            <div className="flex flex-col gap-1">
+              <span className="text-nkz-text-muted text-xs">{t('fallbackInstruction')}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="font-mono text-sm text-nkz-text-primary break-all bg-nkz-surface-sunken rounded px-2 py-1">
+                  {token}
+                </code>
+                <button
+                  className="shrink-0 text-nkz-accent-base underline text-nkz-sm"
+                  onClick={copyToken}
+                >
+                  {copied ? t('copied') : t('copyToken')}
+                </button>
+              </div>
+            </div>
+          )}
+
           <span className="text-nkz-text-muted text-nkz-sm">
             {t('expiresIn', { minutes: expiresIn })}
           </span>
