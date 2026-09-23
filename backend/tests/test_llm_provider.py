@@ -1,3 +1,4 @@
+import ast
 import logging
 
 import pytest
@@ -94,21 +95,66 @@ async def test_complete_passes_configured_values_through(monkeypatch):
     assert reply.model == "some/model"
 
 
+def _imports_litellm(source: str, filename: str) -> bool:
+    """Whether a real `import litellm` / `from litellm import ...` node exists.
+
+    Parses with `ast` and inspects the resulting Import/ImportFrom nodes
+    rather than scanning text: a substring match would also fire on a
+    comment, a docstring, or a string literal naming the library (this
+    guard test's own source does all three), and would miss nothing a real
+    import wouldn't already trip anyway — so it buys no precision, only
+    false positives. A file that fails to parse is not a Python module this
+    check can reason about either way, so it is skipped rather than crashing
+    the whole guard.
+    """
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                alias.name == "litellm" or alias.name.startswith("litellm.")
+                for alias in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and (
+                node.module == "litellm" or node.module.startswith("litellm.")
+            ):
+                return True
+    return False
+
+
 @pytest.mark.asyncio
 async def test_no_module_outside_the_facade_imports_litellm():
     """The facade is the only door to the provider.
 
     Asserted structurally rather than by convention: this is the property that
-    makes swapping providers a one-file change, and conventions erode.
+    makes swapping providers a one-file change, and conventions erode. Covers
+    the whole backend/ tree — not just app/ — so a test file reaching around
+    the facade is caught too, not only application code.
     """
     import pathlib
 
-    root = pathlib.Path(__file__).resolve().parents[1] / "app"
-    offenders = [
-        p.relative_to(root).as_posix()
-        for p in root.rglob("*.py")
-        if "litellm" in p.read_text() and p.name != "provider.py"
-    ]
+    backend_root = pathlib.Path(__file__).resolve().parents[1]
+    facade = backend_root / "app" / "llm" / "provider.py"
+    this_file = pathlib.Path(__file__).resolve()
+    # .venv holds litellm's own installed source (thousands of real
+    # `import litellm` statements) plus every other dependency; it is not
+    # part of this repo (gitignored) and not what this property is about.
+    excluded_dirs = {".venv", "__pycache__", ".pytest_cache"}
+
+    offenders = []
+    for p in backend_root.rglob("*.py"):
+        rel = p.relative_to(backend_root)
+        if any(part in excluded_dirs for part in rel.parts):
+            continue
+        if p in (facade, this_file):
+            continue
+        if _imports_litellm(p.read_text(), str(p)):
+            offenders.append(rel.as_posix())
+
     assert offenders == [], f"litellm imported outside the facade: {offenders}"
 
 
