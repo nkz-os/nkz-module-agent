@@ -47,6 +47,26 @@ class Settings(BaseSettings):
     # Inbound update dedupe retention
     dedupe_ttl_hours: int = 24
 
+    # Language model. Configurable per deployment: every company installing this
+    # platform uses its own. All empty by default — a default naming our model or
+    # endpoint would break their install and leak ours.
+    llm_model: str = ""          # e.g. "azure/<deployment>", "ollama/<model>"
+    llm_api_base: str = ""
+    llm_api_key: str = ""
+    llm_temperature: float = 0.1
+
+    # Hard per-turn budget. Without these an agent can loop, and a loop on a
+    # public endpoint is unbounded spend and unbounded latency.
+    max_iterations: int = 4
+    max_tool_calls: int = 8
+    max_tokens_per_turn: int = 8000
+    turn_timeout_seconds: int = 45
+
+    # Spend caps. The platform rule is fail-open for feature quotas; this is
+    # money on a publicly reachable route, so the cap is finite by default.
+    max_turns_per_tenant_day: int = 500
+    max_turns_per_account_hour: int = 60
+
     # Redis (for caching/celery - optional)
     # redis_url: str = ""
 
