@@ -20,8 +20,8 @@ the mock returned what it was told to return:
 import pytest
 
 from app.agent.budget import TurnBudget
-from app.agent.loop import run_turn
-from app.agent.prompt import wrap_untrusted
+from app.agent.loop import EMPTY_REPLY_TEXT, run_turn
+from app.agent.prompt import system_prompt, wrap_untrusted
 from app.llm.provider import LLMReply, LLMUnconfigured
 
 
@@ -253,3 +253,72 @@ async def test_provider_called_exactly_once_for_normal_turn(monkeypatch):
     monkeypatch.setattr("app.agent.loop.complete", ok)
     await run_turn("hola", _budget())
     assert calls["n"] == 1
+
+
+# --- Reinforcements: loop-level budget exhaustion, degenerate replies,
+# prompt-variant wiring, and TurnResult.tool_calls fidelity. ---
+
+
+@pytest.mark.asyncio
+async def test_token_budget_exhaustion_ends_turn_after_one_reply(monkeypatch):
+    """A normal reply that costs more than max_tokens must end the turn as
+    budget_exhausted with the reply's text -- and only one provider call."""
+    calls = {"n": 0}
+
+    async def pricey(*a, **k):
+        calls["n"] += 1
+        return LLMReply(text="respuesta larga", tool_calls=(),
+                         tokens_prompt=900, tokens_completion=200, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", pricey)
+    r = await run_turn("hola", _budget(max_tokens=1000))
+    assert r.outcome == "budget_exhausted"
+    assert calls["n"] == 1
+    assert r.text
+
+
+@pytest.mark.asyncio
+async def test_degenerate_none_text_reply_falls_back_to_empty_reply_text(monkeypatch):
+    """text=None with no tool calls is a degenerate reply: the turn is still
+    'ok' and the farmer gets the fixed fallback, not silence."""
+    async def hollow(*a, **k):
+        return LLMReply(text=None, tool_calls=(), tokens_prompt=1,
+                         tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", hollow)
+    r = await run_turn("hola", _budget())
+    assert r.outcome == "ok"
+    assert r.text == EMPTY_REPLY_TEXT
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_variant_follows_the_registry(monkeypatch):
+    """The loop must consult the registry to choose the prompt variant: with
+    has_tools() patched True, the system message is the WITH-tools prompt."""
+    seen = {}
+
+    async def capture(messages, tools=None):
+        seen["messages"] = messages
+        return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
+                         tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", capture)
+    monkeypatch.setattr("app.agent.registry.has_tools", lambda: True)
+    await run_turn("hola", _budget())
+    assert seen["messages"][0]["content"] == system_prompt(True)
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_reported_in_turn_result(monkeypatch):
+    """The refused turn's TurnResult carries exactly the call the model
+    attempted -- that tuple is what the audit row will record."""
+    attempted = {"id": "1", "function": {"name": "get_parcels", "arguments": "{}"}}
+
+    async def wants_tool(*a, **k):
+        return LLMReply(text=None, tool_calls=(attempted,),
+                         tokens_prompt=1, tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", wants_tool)
+    r = await run_turn("como va mi parcela", _budget())
+    assert r.outcome == "refused"
+    assert r.tool_calls == (attempted,)

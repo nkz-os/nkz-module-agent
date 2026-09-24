@@ -37,7 +37,7 @@ _USER_MESSAGE_SOURCE = "user message"
 # Backend strings are neutral English, matching app.handlers -- there is no
 # i18n path for user-facing text anywhere in this module yet (the system
 # prompt is model-facing only, per app.agent.prompt). If one is added later,
-# these four constants are what needs to move behind it.
+# these five constants are what needs to move behind it.
 UNCONFIGURED_TEXT = (
     "This assistant has no language model configured in this deployment. "
     "An administrator needs to set one before it can answer."
@@ -53,6 +53,9 @@ REFUSED_TEXT = (
     "I cannot look up platform data yet -- that capability is not available "
     "in this version. I will not guess about a real farm."
 )
+# ASSUMPTION: exists for the degenerate provider reply -- text=None with no
+# tool calls (some providers emit an empty content part). The turn is still
+# answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
 
 
