@@ -34,3 +34,21 @@ CREATE INDEX IF NOT EXISTS agent_turn_audit_tenant_idx
 
 CREATE INDEX IF NOT EXISTS agent_turn_audit_trace_idx
     ON agent_turn_audit (trace_id);
+
+-- Tenant isolation, enforced by the database rather than by every caller
+-- remembering a WHERE clause. The policy reads the tenant from a session
+-- setting, the same mechanism the platform's other audit tables use.
+--
+-- FORCE matters here: without it the table owner is exempt, and the owner is
+-- the role that runs migrations. With it, only a role that is neither owner
+-- nor superuser is actually constrained -- a superuser bypasses row security
+-- unconditionally, FORCE included. So this policy is correct but INERT for a
+-- client connecting as a superuser; it starts protecting the moment the
+-- service connects with a least-privilege role of its own.
+ALTER TABLE agent_turn_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_turn_audit FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS agent_turn_audit_tenant_isolation ON agent_turn_audit;
+CREATE POLICY agent_turn_audit_tenant_isolation ON agent_turn_audit
+    USING (tenant_id = current_setting('app.current_tenant', true))
+    WITH CHECK (tenant_id = current_setting('app.current_tenant', true));
