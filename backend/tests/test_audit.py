@@ -46,6 +46,23 @@ async def test_a_failed_turn_is_also_recorded(db_pool):
     assert row["outcome"] == "error"
 
 
+async def test_unconfigured_outcome_is_recorded(db_pool):
+    """Review 7 minor 4: the unconfigured outcome is one of the five CHECK
+    values; the audit row must accept and preserve it."""
+    await record_turn(_ctx(), "hola", _result(outcome="unconfigured"), 10, "t-6")
+    async with db_pool.acquire() as c:
+        row = await c.fetchrow("SELECT outcome FROM agent_turn_audit WHERE trace_id='t-6'")
+    assert row["outcome"] == "unconfigured"
+
+
+async def test_budget_exhausted_outcome_is_recorded(db_pool):
+    """Review 7 minor 4: budget_exhausted is a first-class audited outcome."""
+    await record_turn(_ctx(), "hola", _result(outcome="budget_exhausted"), 10, "t-7")
+    async with db_pool.acquire() as c:
+        row = await c.fetchrow("SELECT outcome FROM agent_turn_audit WHERE trace_id='t-7'")
+    assert row["outcome"] == "budget_exhausted"
+
+
 async def test_recording_never_raises_into_the_turn(db_pool, monkeypatch):
     """Auditing must not be able to break answering.
 

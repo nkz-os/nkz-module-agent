@@ -1,14 +1,28 @@
 """One conversational turn.
 
-F2 scope: linking, unlinking, and an honest placeholder reply. The agent is
-wired in at F3; only the final branch changes then.
+F2 scope: linking, unlinking, and an honest placeholder reply. F3 wires the
+final branch to the agent: quota check first (a blocked turn short-circuits
+before the model -- the cap exists to stop spend), then a settings-derived
+TurnBudget around run_turn, then an append-only audit row.
+
+Quota race (documented, accepted for v1): check_and_count and record_turn are
+two separate statements, so two concurrent webhooks can both pass the check
+before either one audits. A burst slightly above the cap can slip through.
+Conservative caps contain the blast radius; a serialized check-and-audit path
+is a later task if needed.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 
+from app.agent.budget import TurnBudget
+from app.agent.loop import run_turn
+from app.agent.quota import check_and_count
+from app.audit.repository import record_turn
 from app.channels.telegram import start_payload
+from app.config import get_settings
 from app.domain.messages import InboundMessage, OutboundMessage
 from app.identity import repository as repo
 from app.identity import service
@@ -27,9 +41,8 @@ LINK_OK = (
     "Send /unlink at any time to disconnect this chat."
 )
 UNLINK_OK = "Unlinked. This chat is no longer connected to your account."
-NOT_IMPLEMENTED = (
-    "Answering questions about your parcels is not yet available. "
-    "The link is active, so this chat will start working once it ships."
+QUOTA_TEXT = (
+    "This account has reached its usage limit for now. Please try again later."
 )
 
 
@@ -62,4 +75,25 @@ async def handle_message(msg: InboundMessage, trace_id: str) -> OutboundMessage:
         )
         return OutboundMessage(text=UNLINK_OK)
 
-    return OutboundMessage(text=NOT_IMPLEMENTED)
+    blocked = await check_and_count(
+        session.tenant_id, msg.channel, msg.channel_user_id
+    )
+    if blocked is not None:
+        # Short-circuit before the model: the cap exists to stop spend, so
+        # calling it and then refusing would spend exactly what it saves.
+        return OutboundMessage(text=QUOTA_TEXT)
+
+    settings = get_settings()
+    budget = TurnBudget(
+        max_iterations=settings.max_iterations,
+        max_tool_calls=settings.max_tool_calls,
+        max_tokens=settings.max_tokens_per_turn,
+        timeout_s=settings.turn_timeout_seconds,
+    )
+    started = time.monotonic()
+    result = await run_turn(msg.text or "", budget)
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    await record_turn(session, msg.text, result, latency_ms, trace_id)
+
+    return OutboundMessage(text=result.text)

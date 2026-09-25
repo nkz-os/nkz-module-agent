@@ -1,8 +1,12 @@
+import asyncio
+import logging
 from datetime import datetime, timezone
 
 import pytest
 
 from app import handlers
+from app.agent.loop import TurnResult
+from app.config import get_settings
 from app.domain.messages import InboundMessage
 from app.handlers import handle_message
 from app.identity import repository as repo
@@ -61,16 +65,6 @@ async def test_unlink_revokes_the_link(db_pool):
     assert await service.resolve_session("telegram", "42", "t-3") is None
 
 
-async def test_linked_user_gets_the_read_only_notice(db_pool):
-    """F2 has no agent yet; the reply must not pretend otherwise."""
-    token, _ = await service.create_link_token("tenant_a", "user_a", ())
-    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
-
-    reply = await handle_message(_msg("¿cómo va mi parcela?"), trace_id="t-2")
-
-    assert reply.text == handlers.NOT_IMPLEMENTED
-
-
 async def test_unlink_cannot_revoke_another_tenants_link(db_pool):
     """Security property: one tenant must never revoke another tenant's link.
 
@@ -93,3 +87,185 @@ async def test_unlink_cannot_revoke_another_tenants_link(db_pool):
     assert await repo.get_active_link("telegram", "42") is not None
     ctx = await service.resolve_session("telegram", "42", "t-3")
     assert ctx is not None and ctx.tenant_id == "tenant_a"
+
+
+# --- Task 9: the final branch runs the agent ---------------------------------
+
+
+async def test_linked_user_gets_an_agent_reply(db_pool, monkeypatch):
+    async def fake_turn(text, budget):
+        return TurnResult("respuesta del agente", "ok", "m", (), 1, 1)
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+
+    reply = await handle_message(_msg("¿cómo va mi parcela?"), trace_id="t-2")
+    assert reply.text == "respuesta del agente"
+
+
+async def test_every_turn_is_audited(db_pool, monkeypatch):
+    async def fake_turn(text, budget):
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-audit")
+
+    async with db_pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT tenant_id, outcome FROM agent_turn_audit WHERE trace_id='t-audit'")
+    assert row["tenant_id"] == "tenant_a"
+
+
+async def test_quota_block_short_circuits_before_the_model(db_pool, monkeypatch):
+    """A blocked turn must not reach the model.
+
+    The cap exists to stop spend; calling the model and then refusing would spend
+    the money it exists to save.
+    """
+    called = {"n": 0}
+
+    async def fake_turn(text, budget):
+        called["n"] += 1
+        return TurnResult("no debería", "ok", "m", (), 1, 1)
+
+    async def always_blocked(*a, **k):
+        return "tenant_daily"
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    monkeypatch.setattr("app.handlers.check_and_count", always_blocked)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+
+    reply = await handle_message(_msg("hola"), trace_id="t-q")
+    assert called["n"] == 0
+    assert reply.text
+
+
+async def test_unlinked_user_never_reaches_the_model(db_pool, monkeypatch):
+    """The oldest cost gate in this module, now with money behind it."""
+    called = {"n": 0}
+
+    async def fake_turn(text, budget):
+        called["n"] += 1
+        return TurnResult("no", "ok", "m", (), 1, 1)
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    reply = await handle_message(_msg("hola", user="999"), trace_id="t-x")
+    assert called["n"] == 0
+    assert reply.text == handlers.NOT_LINKED
+
+
+# --- Reinforcements (reviews 7 & 8) ------------------------------------------
+
+
+async def test_settings_map_to_the_turn_budget(db_pool, monkeypatch):
+    """Wiring is the point of this task: get_settings() must translate into the
+    four TurnBudget fields exactly. A silent permutation here would survive
+    every behavioural test, so the budget object itself is inspected."""
+    seen = {}
+
+    async def capture_budget(text, budget):
+        seen["budget"] = budget
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    monkeypatch.setenv("MAX_ITERATIONS", "3")
+    monkeypatch.setenv("MAX_TOOL_CALLS", "5")
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN", "7777")
+    monkeypatch.setenv("TURN_TIMEOUT_SECONDS", "11")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("app.handlers.run_turn", capture_budget)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-a")
+
+    budget = seen["budget"]
+    assert budget._max_iterations == 3
+    assert budget._max_tool_calls == 5
+    assert budget._max_tokens == 7777
+    assert budget._timeout_s == 11
+    get_settings.cache_clear()
+
+
+async def test_blocked_turn_leaves_no_audit_row(db_pool, monkeypatch):
+    """Decision 3b: a blocked turn is refused before the model, so it never
+    reaches record_turn and must leave no audit row for that trace."""
+    async def always_blocked(*a, **k):
+        return "tenant_daily"
+
+    async def fake_turn(text, budget):
+        return TurnResult("no", "ok", "m", (), 1, 1)
+
+    monkeypatch.setattr("app.handlers.check_and_count", always_blocked)
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+
+    reply = await handle_message(_msg("hola"), trace_id="t-blocked")
+    assert reply.text == handlers.QUOTA_TEXT
+
+    async with db_pool.acquire() as c:
+        n = await c.fetchval(
+            "SELECT count(*) FROM agent_turn_audit WHERE trace_id='t-blocked'")
+    assert n == 0
+
+
+async def test_handled_turn_records_a_full_audit_row(db_pool, monkeypatch):
+    """Review 7 minor 1: every column of the audit row is pinned.
+
+    The fake turn sleeps so the measured latency is non-zero; a hardcoded
+    latency_ms=0 in the wiring would otherwise satisfy a `>= 0` assertion
+    and the mutation would survive.
+    """
+    async def fake_turn(text, budget):
+        await asyncio.sleep(0.02)
+        return TurnResult("respuesta", "ok", "model-1", (), 10, 5)
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-audit-full")
+
+    async with db_pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT tenant_id, user_id, channel, channel_user_id, inbound_text, "
+            "outcome, latency_ms, model, tokens_prompt, tokens_completion, "
+            "reply_text FROM agent_turn_audit WHERE trace_id='t-audit-full'")
+    assert row["tenant_id"] == "tenant_a"
+    assert row["user_id"] == "user_a"
+    assert row["channel"] == "telegram"
+    assert row["channel_user_id"] == "42"
+    assert row["inbound_text"] == "hola"
+    assert row["outcome"] == "ok"
+    assert row["latency_ms"] > 0
+    assert row["model"] == "model-1"
+    assert row["tokens_prompt"] == 10
+    assert row["tokens_completion"] == 5
+    assert row["reply_text"] == "respuesta"
+
+
+async def test_audit_failure_keeps_reply_and_hides_message_text(
+        db_pool, monkeypatch, caplog):
+    """Review 7 minor 2: a failing audit write must neither lose the reply nor
+    leak the farmer's message text into the logs."""
+    canary = "CANARY-9f3a-do-not-log-this-text"
+
+    async def fake_turn(text, budget):
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    async def broken_pool():
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    monkeypatch.setattr("app.audit.repository.get_pool", broken_pool)
+
+    caplog.set_level(logging.INFO)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    reply = await handle_message(_msg(canary), trace_id="t-canary")
+
+    assert reply.text == "ok"
+    assert canary not in caplog.text

@@ -121,3 +121,43 @@ async def test_both_caps_reached_reports_account_hourly(db_pool, monkeypatch):
     await _seed(db_pool, 3)  # 3 turns today by account 42 -> both caps hit
     assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
     get_settings.cache_clear()
+
+
+async def test_check_and_count_is_check_only(db_pool, monkeypatch):
+    """Review 8 minor 2: a blocked turn is refused, never counted -- the check
+    must not insert or mutate any audit row."""
+    monkeypatch.setenv("MAX_TURNS_PER_ACCOUNT_HOUR", "2")
+    get_settings.cache_clear()
+    await _seed(db_pool, 2)
+    async with db_pool.acquire() as c:
+        before = await c.fetchval("SELECT count(*) FROM agent_turn_audit")
+
+    assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
+    assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
+
+    async with db_pool.acquire() as c:
+        after = await c.fetchval("SELECT count(*) FROM agent_turn_audit")
+    assert after == before
+    get_settings.cache_clear()
+
+
+async def test_tenant_daily_window_expires(db_pool, monkeypatch):
+    """Review 8 minor 3: rows older than one day must not count against the
+    tenant daily cap, even when the count is at the cap."""
+    monkeypatch.setenv("MAX_TURNS_PER_TENANT_DAY", "3")
+    get_settings.cache_clear()
+    await _seed(db_pool, 3, hours_ago=25)
+    assert await check_and_count("tenant_a", "telegram", "42") is None
+    get_settings.cache_clear()
+
+
+async def test_account_hourly_cap_is_scoped_by_channel(db_pool, monkeypatch):
+    """Review 8 minor 4: the hourly account cap is per channel, so the same
+    human on a second channel keeps its own rolling budget."""
+    monkeypatch.setenv("MAX_TURNS_PER_ACCOUNT_HOUR", "2")
+    get_settings.cache_clear()
+    await _seed(db_pool, 2)  # telegram / 42 at the cap
+    assert await check_and_count("tenant_a", "whatsapp", "42") is None
+    # The exhausted telegram channel still blocks, proving the isolation.
+    assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
+    get_settings.cache_clear()

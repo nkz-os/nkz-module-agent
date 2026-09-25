@@ -309,6 +309,23 @@ async def test_system_prompt_variant_follows_the_registry(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_system_prompt_defaults_to_no_tools_variant(monkeypatch):
+    """With the genuinely empty registry left alone, the loop must send
+    system_prompt(False) -- the no-tools variant actually in flight at
+    runtime, not a hand-rolled string."""
+    seen = {}
+
+    async def capture(messages, tools=None):
+        seen["messages"] = messages
+        return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
+                        tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", capture)
+    await run_turn("hola", _budget())
+    assert seen["messages"][0]["content"] == system_prompt(False)
+
+
+@pytest.mark.asyncio
 async def test_tool_calls_reported_in_turn_result(monkeypatch):
     """The refused turn's TurnResult carries exactly the call the model
     attempted -- that tuple is what the audit row will record."""
