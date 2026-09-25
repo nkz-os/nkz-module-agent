@@ -24,6 +24,21 @@ def _msg(text: str, user: str = "42") -> InboundMessage:
     )
 
 
+@pytest.fixture
+def clear_settings_cache():
+    """Clear get_settings()'s cache on teardown, even if the test fails.
+
+    A trailing cache_clear() on a test's last line never runs once an
+    earlier assertion raises, poisoning the cache for the rest of the
+    session. Same fixture as test_identity_service.py — duplicated here
+    because it is a local fixture there, not a shared conftest one.
+    """
+    yield
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
 async def test_unlinked_user_is_told_to_link(db_pool):
     reply = await handle_message(_msg("hola", user="999"), trace_id="t-1")
     assert reply.text == handlers.NOT_LINKED
@@ -161,7 +176,7 @@ async def test_unlinked_user_never_reaches_the_model(db_pool, monkeypatch):
 # --- Reinforcements (reviews 7 & 8) ------------------------------------------
 
 
-async def test_settings_map_to_the_turn_budget(db_pool, monkeypatch):
+async def test_settings_map_to_the_turn_budget(db_pool, monkeypatch, clear_settings_cache):
     """Wiring is the point of this task: get_settings() must translate into the
     four TurnBudget fields exactly. A silent permutation here would survive
     every behavioural test, so the budget object itself is inspected."""
@@ -187,7 +202,6 @@ async def test_settings_map_to_the_turn_budget(db_pool, monkeypatch):
     assert budget._max_tool_calls == 5
     assert budget._max_tokens == 7777
     assert budget._timeout_s == 11
-    get_settings.cache_clear()
 
 
 async def test_blocked_turn_leaves_no_audit_row(db_pool, monkeypatch):
@@ -245,6 +259,43 @@ async def test_handled_turn_records_a_full_audit_row(db_pool, monkeypatch):
     assert row["tokens_prompt"] == 10
     assert row["tokens_completion"] == 5
     assert row["reply_text"] == "respuesta"
+
+
+async def test_latency_clock_is_monotonic_by_provenance(db_pool, monkeypatch):
+    """Latency must be measured with time.monotonic, not time.time.
+
+    A wall-clock reading is wrong twice over for a spend/audit metric: an
+    NTP step or DST change can make it negative, and it is not the clock the
+    budget's own deadline uses. Provenance is pinned by injecting a clock
+    whose `monotonic()` and `time()` return different values and asserting
+    the recorded latency comes from `monotonic()`. Rewriting the call site
+    in handlers.py to `time.time()` would make this go red (latency would
+    read 0 instead of 250).
+    """
+    monotonic_ticks = [100.0, 100.25]
+    time_ticks = [50_000.0, 50_000.0]
+
+    class FakeClock:
+        def monotonic(self) -> float:
+            return monotonic_ticks.pop(0)
+
+        def time(self) -> float:
+            return time_ticks.pop(0)
+
+    monkeypatch.setattr(handlers, "time", FakeClock())
+
+    async def fake_turn(text, budget):
+        return TurnResult("respuesta", "ok", "model-1", (), 10, 5)
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-clock")
+
+    async with db_pool.acquire() as c:
+        latency = await c.fetchval(
+            "SELECT latency_ms FROM agent_turn_audit WHERE trace_id='t-clock'")
+    assert latency == 250
 
 
 async def test_audit_failure_keeps_reply_and_hides_message_text(
