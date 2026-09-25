@@ -102,6 +102,39 @@ spec:
             # production value lives in the ConfigMap overlay.
             - name: TELEGRAM_BOT_USERNAME
               value: "your_bot_username"
+            # Language model — per-deployment, no hardcoded model/endpoint.
+            # Peripheral, not core: unset means the module starts, logs
+            # CRITICAL and answers with a not-configured notice instead of
+            # crashing the pod (see docs/index.md). LLM_API_KEY comes from a
+            # Secret; the rest are non-secret config whose production values
+            # live in the ConfigMap overlay (agent-config above).
+            - name: LLM_MODEL
+              value: ""
+            - name: LLM_API_BASE
+              value: ""
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-llm-secret
+                  key: api-key
+                  optional: true
+            - name: LLM_TEMPERATURE
+              value: "0.1"
+            # Hard per-turn budget — without these an agent can loop, and a
+            # loop on a public endpoint is unbounded spend and latency.
+            - name: MAX_ITERATIONS
+              value: "4"
+            - name: MAX_TOOL_CALLS
+              value: "8"
+            - name: MAX_TOKENS_PER_TURN
+              value: "8000"
+            - name: TURN_TIMEOUT_SECONDS
+              value: "45"
+            # Spend caps — finite by default (money on a public route).
+            - name: MAX_TURNS_PER_TENANT_DAY
+              value: "500"
+            - name: MAX_TURNS_PER_ACCOUNT_HOUR
+              value: "60"
           resources:
             requests:
               memory: "128Mi"

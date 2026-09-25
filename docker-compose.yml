@@ -40,6 +40,20 @@ services:
       - TELEGRAM_BOT_TOKEN=
       - TELEGRAM_WEBHOOK_SECRET=
       - TELEGRAM_BOT_USERNAME=
+      # Language model — per-deployment, empty by default (config.py). Unset
+      # is NOT a crash: the module starts, logs CRITICAL and answers with a
+      # not-configured notice (see docs/index.md).
+      - LLM_MODEL=
+      - LLM_API_BASE=
+      - LLM_API_KEY=
+      - LLM_TEMPERATURE=0.1
+      # Hard per-turn budget + spend caps (config.py defaults echoed here).
+      - MAX_ITERATIONS=4
+      - MAX_TOOL_CALLS=8
+      - MAX_TOKENS_PER_TURN=8000
+      - TURN_TIMEOUT_SECONDS=45
+      - MAX_TURNS_PER_TENANT_DAY=500
+      - MAX_TURNS_PER_ACCOUNT_HOUR=60
     depends_on:
       db:
         condition: service_healthy

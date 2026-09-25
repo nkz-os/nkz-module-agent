@@ -13,19 +13,19 @@ panel, then talks to the bot from their phone.
 
 ## What this is, and what it is not
 
-**Version 1 is read-only.** It answers with a fixed placeholder reply once a
-chat is linked (`backend/app/handlers.py`). It does **not** write to the
-platform's context broker, does not record field operations, and does not
-command machinery. A language model is not wired in yet — the final branch
-of `handle_message` is deliberately a static string, not a call to anything
-that could take an action.
+**Version 1 is read-only.** A language model answers once a chat is linked
+(`backend/app/agent/loop.py`), constrained by a per-turn budget and by
+per-tenant and per-account turn quotas (`backend/app/handlers.py`). It has
+**no tools** in this phase, so it does **not** write to the platform's
+context broker, does not record field operations, and does not command
+machinery: it turns text into text, and never takes an action.
 
-This is not an oversight to "complete" quickly. Turning that branch into a
-model call without also shipping the tool set, the spend budget, and the
-audit trail that a writing agent needs is exactly the shortcut the design
-splits into a later phase on purpose. If you are about to give this module
-the ability to change platform state, that is a new phase of work with its
-own human-confirmation design — not a follow-up commit on this one.
+Shipping that model call without the spend budget, the quota and the audit
+trail is exactly the shortcut the design splits into a later phase on
+purpose — and the reason the tool set is absent here. If you are about to
+give this module the ability to change platform state, that is a new phase
+of work with its own human-confirmation design — not a follow-up commit on
+this one.
 
 ## Two authentication surfaces, deliberately different
 
@@ -137,11 +137,21 @@ them — not gaps to quietly close in an unrelated change.
   burned with no link created; the user has to generate a new link. Fixing
   this properly means one transaction spanning both steps, which means a new
   repository function — not a try/except patch here.
+- **Without `LLM_MODEL` the module does not crash.** It starts, logs the
+  missing model at CRITICAL (`llm_unconfigured` in
+  `backend/app/agent/loop.py`), and answers with the not-configured notice
+  (`UNCONFIGURED_TEXT`). That is deliberate: crashing would leave the
+  webhook silent, and a messaging platform that sees no acknowledgement
+  retries the delivery — so a missing model would become an unbounded retry
+  loop against a dead route. Starting degraded and answering is the cheaper,
+  louder failure.
 - **The webhook processes in-process, via `BackgroundTasks`.** If the pod
   exits between returning the acknowledgement and sending the reply, that
-  reply is lost with no retry (the platform already saw its `200`). This is
-  acceptable while a turn costs nothing — there is no model call to redo.
-  Revisit this once a language model is wired in and a lost turn has a cost.
+  reply is lost with no retry (the platform already saw its `200`). A lost
+  turn now spends a model call and loses its audit row, so this is more
+  material than it was before the model was wired in; the in-process
+  background task still does not survive a pod exit, so a durable
+  out-of-band queue is the follow-up.
 - **The schema is duplicated between this repository and the platform's
   numbered migrations.** `backend/tests/fixtures/schema.sql` here is meant
   to be byte-identical to the platform repository's
