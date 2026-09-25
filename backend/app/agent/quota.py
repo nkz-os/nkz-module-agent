@@ -9,11 +9,13 @@ timestamp — a second counter would be a second thing to keep correct.
 
 Design decisions (deliberate, documented for review):
 
-* Account hourly budget is scoped to ``(channel, channel_user_id)`` with NO
-  tenant filter. A human gets one rolling hourly budget even when talking to
-  two tenants: the resource being protected (the human's attention/pocket, and
-  the model behind it) belongs to the human, not to a tenant pairing. The
-  tenant daily cap is the tenant-scoped protection; both exist.
+* Account hourly budget is scoped to ``(tenant_id, channel, channel_user_id)``.
+  Decision 3a was revisited for the RLS rollout: the audit table is
+  tenant-scoped by row-level security for this module, so counting one human
+  across tenants would require a privileged exception (a SECURITY DEFINER
+  function) to defend a rare scenario (the same human on two tenants), and the
+  tenant daily cap already bounds the damage. The per-human budget within each
+  tenant is kept.
 * Blocked turns are never inserted, so they never count. If they counted, a
   spammer who is already blocked would keep inflating the counters with
   messages that never reached the model, keeping the tenant locked out far
@@ -44,27 +46,40 @@ async def check_and_count(
     settings = get_settings()
     pool = await get_pool()
 
-    per_account = await pool.fetchval(
-        """
-        SELECT count(*) FROM agent_turn_audit
-         WHERE channel = $1 AND channel_user_id = $2
-           AND created_at > now() - interval '1 hour'
-        """,
-        channel, channel_user_id,
-    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Both counts read the audit table, which is RLS tenant-scoped. A
+            # least-privilege role sees zero rows without this session setting,
+            # silently disabling the quota — so set the tenant context before
+            # the SELECTs. is_local=true (SET LOCAL) confines it to this
+            # transaction; a recycled connection inherits nothing.
+            await conn.execute(
+                "SELECT set_config('app.current_tenant', $1, true)", tenant_id
+            )
+
+            per_account = await conn.fetchval(
+                """
+                SELECT count(*) FROM agent_turn_audit
+                 WHERE tenant_id = $1 AND channel = $2 AND channel_user_id = $3
+                   AND created_at > now() - interval '1 hour'
+                """,
+                tenant_id, channel, channel_user_id,
+            )
+
+            per_tenant = await conn.fetchval(
+                """
+                SELECT count(*) FROM agent_turn_audit
+                 WHERE tenant_id = $1 AND created_at > now() - interval '1 day'
+                """,
+                tenant_id,
+            )
+
     if per_account >= settings.max_turns_per_account_hour:
         logger.warning(
             "quota_blocked reason=account_hourly channel=%s", channel
         )
         return "account_hourly"
 
-    per_tenant = await pool.fetchval(
-        """
-        SELECT count(*) FROM agent_turn_audit
-         WHERE tenant_id = $1 AND created_at > now() - interval '1 day'
-        """,
-        tenant_id,
-    )
     if per_tenant >= settings.max_turns_per_tenant_day:
         logger.warning(
             "quota_blocked reason=tenant_daily tenant_id=%s", tenant_id

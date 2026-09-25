@@ -84,14 +84,17 @@ async def test_tenant_daily_only_blocks_that_tenant(db_pool, monkeypatch):
     get_settings.cache_clear()
 
 
-async def test_account_hourly_counts_across_tenants(db_pool, monkeypatch):
-    """The hourly account budget is per human, not per (tenant, human):
-    the same channel_user_id gets one rolling hourly budget even when talking
-    to two different tenants."""
+async def test_account_hourly_is_scoped_by_tenant(db_pool, monkeypatch):
+    """Decision 3a revisited (RLS rollout): the hourly account budget is now
+    per (tenant, channel, channel_user_id), not per human across tenants. The
+    audit table is RLS tenant-scoped for this module, so counting one human
+    across tenants would need a privileged SECURITY DEFINER exception for a
+    rare case, and the tenant daily cap already bounds the damage. Seeding
+    tenant_b's account to the cap must not block the same account on tenant_a."""
     monkeypatch.setenv("MAX_TURNS_PER_ACCOUNT_HOUR", "2")
     get_settings.cache_clear()
     await _seed(db_pool, 2, tenant="tenant_b")
-    assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
+    assert await check_and_count("tenant_a", "telegram", "42") is None
     get_settings.cache_clear()
 
 

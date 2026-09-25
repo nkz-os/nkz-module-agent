@@ -29,20 +29,32 @@ async def record_turn(
 ) -> None:
     try:
         pool = await get_pool()
-        await pool.execute(
-            """
-            INSERT INTO agent_turn_audit
-                   (trace_id, tenant_id, user_id, channel, channel_user_id,
-                    inbound_text, model, tool_calls, reply_text,
-                    tokens_prompt, tokens_completion, latency_ms, outcome)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
-            """,
-            trace_id, ctx.tenant_id, ctx.user_id, ctx.channel,
-            ctx.channel_user_id, inbound_text, result.model,
-            json.dumps(list(result.tool_calls)), result.text,
-            result.tokens_prompt, result.tokens_completion, latency_ms,
-            result.outcome,
-        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # The audit table is RLS tenant-scoped: the policy reads the
+                # tenant from this session setting. is_local=true gives SET
+                # LOCAL semantics, so the context dies with the transaction and
+                # a recycled pool connection never leaks one tenant into the
+                # next. Inert while the pool connects as superuser, load-bearing
+                # once the service connects with its least-privilege role.
+                await conn.execute(
+                    "SELECT set_config('app.current_tenant', $1, true)",
+                    ctx.tenant_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO agent_turn_audit
+                           (trace_id, tenant_id, user_id, channel, channel_user_id,
+                            inbound_text, model, tool_calls, reply_text,
+                            tokens_prompt, tokens_completion, latency_ms, outcome)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
+                    """,
+                    trace_id, ctx.tenant_id, ctx.user_id, ctx.channel,
+                    ctx.channel_user_id, inbound_text, result.model,
+                    json.dumps(list(result.tool_calls)), result.text,
+                    result.tokens_prompt, result.tokens_completion, latency_ms,
+                    result.outcome,
+                )
     except Exception:
         logger.exception(
             "audit_write_failed trace_id=%s tenant_id=%s outcome=%s",
