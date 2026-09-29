@@ -1,15 +1,18 @@
 -- =============================================================================
--- 102 — Conversational agent: per-turn audit trail
--- Idempotent. Admin/metadata only; no time-series data here.
+-- 002 — Conversational agent: per-turn audit trail, tenant-scoped by RLS
+-- =============================================================================
+-- Born in the module schema (never public), unlike the identity tables that
+-- are adopted from public by 001. Append-only by convention and by the grants
+-- below (INSERT/SELECT only — no UPDATE/DELETE).
 --
 -- One row per conversational turn. Written after the turn resolves, whether it
 -- succeeded or failed — a turn that errored is exactly the one someone will ask
--- about later. Nothing in the module updates or deletes these rows: the value of
--- an audit trail is that it is append-only, and the absence of an update path is
--- the only thing enforcing that.
+-- about later. Nothing in the module updates or deletes these rows: the value
+-- of an audit trail is that it is append-only, and the absence of an update
+-- path is the only thing enforcing that.
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS agent_turn_audit (
+CREATE TABLE IF NOT EXISTS agent_module.agent_turn_audit (
     id                BIGSERIAL PRIMARY KEY,
     trace_id          TEXT        NOT NULL,
     tenant_id         TEXT        NOT NULL,
@@ -30,10 +33,10 @@ CREATE TABLE IF NOT EXISTS agent_turn_audit (
 );
 
 CREATE INDEX IF NOT EXISTS agent_turn_audit_tenant_idx
-    ON agent_turn_audit (tenant_id, created_at DESC);
+    ON agent_module.agent_turn_audit (tenant_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS agent_turn_audit_trace_idx
-    ON agent_turn_audit (trace_id);
+    ON agent_module.agent_turn_audit (trace_id);
 
 -- Tenant isolation, enforced by the database rather than by every caller
 -- remembering a WHERE clause. The policy reads the tenant from a session
@@ -45,10 +48,13 @@ CREATE INDEX IF NOT EXISTS agent_turn_audit_trace_idx
 -- unconditionally, FORCE included. So this policy is correct but INERT for a
 -- client connecting as a superuser; it starts protecting the moment the
 -- service connects with a least-privilege role of its own.
-ALTER TABLE agent_turn_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE agent_turn_audit FORCE ROW LEVEL SECURITY;
+ALTER TABLE agent_module.agent_turn_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_module.agent_turn_audit FORCE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS agent_turn_audit_tenant_isolation ON agent_turn_audit;
-CREATE POLICY agent_turn_audit_tenant_isolation ON agent_turn_audit
+DROP POLICY IF EXISTS agent_turn_audit_tenant_isolation ON agent_module.agent_turn_audit;
+CREATE POLICY agent_turn_audit_tenant_isolation ON agent_module.agent_turn_audit
     USING (tenant_id = current_setting('app.current_tenant', true))
     WITH CHECK (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT INSERT, SELECT ON TABLE agent_module.agent_turn_audit TO agent_module;
+GRANT USAGE, SELECT ON SEQUENCE agent_module.agent_turn_audit_id_seq TO agent_module;

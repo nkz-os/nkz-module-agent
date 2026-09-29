@@ -24,8 +24,12 @@ RUN useradd -m -u 1000 appuser
 # Copy installed packages from builder to appuser home
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
-# Copy application code
+# Copy application code, migrations and the migration runner so the same
+# image can also be invoked as a one-shot migrate Job (k8s/job-agent-migrate.yaml)
+# with `command: ["python", "scripts/run_migrations.py"]`.
 COPY --chown=appuser:appuser app/ ./app/
+COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser scripts/ ./scripts/
 
 # Switch to non-root user
 USER appuser

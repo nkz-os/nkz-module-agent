@@ -1,7 +1,8 @@
 """RLS functional tests for the agent module.
 
-``agent_turn_audit`` (fixtures/schema_102.sql) has row-level security enabled
-and FORCEd, reading the tenant from the ``app.current_tenant`` session setting.
+``agent_turn_audit`` (migrations/002_agent_turn_audit.sql) has row-level
+security enabled and FORCEd, reading the tenant from the
+``app.current_tenant`` session setting.
 A superuser bypasses RLS unconditionally, so the schema tests that assert
 policy configuration cannot prove the *service* is protected — only a role
 that is neither owner nor superuser is actually constrained.
@@ -52,26 +53,36 @@ async def _create_probe_role(db_pool) -> None:
         if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", ROLE):
             # Leftover role (e.g. a failed earlier run): drop its grants first,
             # otherwise the DROP below fails on dependent privileges.
-            await conn.execute(f"REVOKE ALL ON agent_turn_audit FROM {ROLE}")
             await conn.execute(
-                f"REVOKE ALL ON SEQUENCE agent_turn_audit_id_seq FROM {ROLE}"
+                f"REVOKE ALL ON agent_module.agent_turn_audit FROM {ROLE}"
             )
+            await conn.execute(
+                f"REVOKE ALL ON SEQUENCE agent_module.agent_turn_audit_id_seq "
+                f"FROM {ROLE}"
+            )
+            await conn.execute(f"REVOKE USAGE ON SCHEMA agent_module FROM {ROLE}")
             await conn.execute(f"DROP ROLE {ROLE}")
         await conn.execute(f"CREATE ROLE {ROLE} NOSUPERUSER")
+        await conn.execute(f"GRANT USAGE ON SCHEMA agent_module TO {ROLE}")
         await conn.execute(
-            f"GRANT SELECT, INSERT ON agent_turn_audit TO {ROLE}"
+            f"GRANT SELECT, INSERT ON agent_module.agent_turn_audit TO {ROLE}"
         )
         await conn.execute(
-            f"GRANT USAGE, SELECT ON SEQUENCE agent_turn_audit_id_seq TO {ROLE}"
+            f"GRANT USAGE, SELECT ON SEQUENCE "
+            f"agent_module.agent_turn_audit_id_seq TO {ROLE}"
         )
 
 
 async def _drop_probe_role(db_pool) -> None:
     async with db_pool.acquire() as conn:
-        await conn.execute(f"REVOKE ALL ON agent_turn_audit FROM {ROLE}")
         await conn.execute(
-            f"REVOKE ALL ON SEQUENCE agent_turn_audit_id_seq FROM {ROLE}"
+            f"REVOKE ALL ON agent_module.agent_turn_audit FROM {ROLE}"
         )
+        await conn.execute(
+            f"REVOKE ALL ON SEQUENCE agent_module.agent_turn_audit_id_seq "
+            f"FROM {ROLE}"
+        )
+        await conn.execute(f"REVOKE USAGE ON SCHEMA agent_module FROM {ROLE}")
         await conn.execute(f"DROP ROLE IF EXISTS {ROLE}")
 
 
@@ -88,6 +99,11 @@ async def _probe_pool() -> asyncpg.Pool:
 
     async def _init(conn: asyncpg.Connection) -> None:
         await conn.execute(f"SET ROLE {ROLE}")
+        # SET ROLE resets the session to the role's defaults (search_path
+        # "$user", public), which would hide agent_module; mirror app.db's
+        # server_settings so unqualified queries resolve exactly as they do in
+        # the service.
+        await conn.execute("SET search_path = agent_module, public")
 
     async def _no_reset(conn: asyncpg.Connection) -> None:
         pass

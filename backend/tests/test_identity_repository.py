@@ -69,8 +69,8 @@ async def test_relinking_revokes_the_previous_link(db_pool):
     two active rows structurally impossible, and finding the new link active
     already excludes zero — so `count == 1` cannot fail given the schema
     invariant plus the preceding assertion. Reading the old row's actual
-    status and revoked_at tests repository.py's behaviour, not schema.sql's
-    constraint.
+    status and revoked_at tests repository.py's behaviour, not the schema
+    migration's constraint.
     """
     old_id = await repo.upsert_active_link("telegram", "42", "tenant_a", "user_a", ("Farmer",))
     new_id = await repo.upsert_active_link("telegram", "42", "tenant_b", "user_b", ("Farmer",))

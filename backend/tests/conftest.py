@@ -21,11 +21,25 @@ import pytest_asyncio
 
 from app.db import close_pool
 
-# Authored here so the module's CI — which checks out only this repo — can
-# build a schema. The canonical numbered migration in the platform repo is a
-# byte-identical copy; test_schema_matches_platform_migration guards the drift.
-SCHEMA = pathlib.Path(__file__).resolve().parent / "fixtures" / "schema.sql"
-SCHEMA_102 = pathlib.Path(__file__).resolve().parent / "fixtures" / "schema_102.sql"
+# The migrations ARE the source of truth now — the module owns its schema and
+# the numbered migrations in the platform repo are no longer the authority.
+# db_pool applies 001 + 002 directly from here. 000 (the role) is NOT applied
+# by the fixture: the RLS tests create their own probe role, and the dedicated
+# 000 test exercises it in isolation. The role still has to exist for 001's
+# GRANTs, so the fixture materialises it idempotently below (same statement as
+# 000, run as a prerequisite rather than as a "migration").
+MIGRATIONS = pathlib.Path(__file__).resolve().parents[1] / "migrations"
+MIGRATION_000 = MIGRATIONS / "000_create_role.sql"
+MIGRATION_001 = MIGRATIONS / "001_agent_schema.sql"
+MIGRATION_002 = MIGRATIONS / "002_agent_turn_audit.sql"
+
+_ROLE_PRECONDITION = """
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_module') THEN
+    CREATE ROLE agent_module LOGIN;
+  END IF;
+END $$;
+"""
 
 requires_db = pytest.mark.skipif(
     not os.environ.get("POSTGRES_URL"),
@@ -54,10 +68,14 @@ async def _reset_process_pool():
 
 @pytest_asyncio.fixture
 async def db_pool():
-    pool = await asyncpg.create_pool(os.environ["POSTGRES_URL"])
+    pool = await asyncpg.create_pool(
+        os.environ["POSTGRES_URL"],
+        server_settings={"search_path": "agent_module,public"},
+    )
     async with pool.acquire() as conn:
-        await conn.execute(SCHEMA.read_text())
-        await conn.execute(SCHEMA_102.read_text())
+        await conn.execute(_ROLE_PRECONDITION)
+        await conn.execute(MIGRATION_001.read_text())
+        await conn.execute(MIGRATION_002.read_text())
         await conn.execute(
             "TRUNCATE agent_channel_links, agent_link_tokens, agent_processed_updates, "
             "agent_turn_audit"

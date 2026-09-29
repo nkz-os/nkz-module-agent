@@ -78,9 +78,12 @@ services:
       - POSTGRES_DB=module_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Postgres only runs files here on an EMPTY data dir (first boot). Same
-      # schema as the platform's merged numbered migration — do not edit.
-      - ./backend/tests/fixtures/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Postgres only runs files here on an EMPTY data dir (first boot). The
+      # module owns its schema now (backend/migrations/), so these mount the
+      # real migrations in order instead of a hand-kept copy.
+      - ./backend/migrations/000_create_role.sql:/docker-entrypoint-initdb.d/000_create_role.sql:ro
+      - ./backend/migrations/001_agent_schema.sql:/docker-entrypoint-initdb.d/001_agent_schema.sql:ro
+      - ./backend/migrations/002_agent_turn_audit.sql:/docker-entrypoint-initdb.d/002_agent_turn_audit.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U module"]
       interval: 10s

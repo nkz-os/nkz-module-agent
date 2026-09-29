@@ -152,15 +152,12 @@ them — not gaps to quietly close in an unrelated change.
   material than it was before the model was wired in; the in-process
   background task still does not survive a pod exit, so a durable
   out-of-band queue is the follow-up.
-- **The schema is duplicated between this repository and the platform's
-  numbered migrations.** `backend/tests/fixtures/schema.sql` here is meant
-  to be byte-identical to the platform repository's
-  `config/timescaledb/migrations/101_agent_channel_links.sql`.
-  `backend/tests/test_schema_sync.py` checks that, but skips whenever the
-  platform repository is not checked out alongside this one — which is
-  always true in this module's own CI, since it checks out only this repo.
-  The guard exists for whoever runs both repos side by side; it is not
-  exercised automatically here.
+- **The module owns its schema.** `backend/migrations/` is the single source
+  of truth (000 role, 001 dedicated `agent_module` schema + adoption of the
+  legacy public tables, 002 audit trail) and is applied idempotently by
+  `backend/scripts/run_migrations.py` (the `k8s/job-agent-migrate.yaml` Job).
+  The `agent_module` role is created without a password here — the credential
+  is assigned out-of-band in the deployment environment.
 - **`purge_expired()` (`backend/app/dedupe/__init__.py`) is implemented and
   tested, but nothing calls it.** Its scheduler is out of scope for this
   phase; wiring a periodic caller belongs to later operational work.
