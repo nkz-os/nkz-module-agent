@@ -1,0 +1,55 @@
+# =============================================================================
+# Agent Migrate Job (reference template — public repo)
+# =============================================================================
+# One-shot job that applies backend/migrations/*.sql in order, idempotently.
+# Reuses the SAME image as the backend Deployment (k8s/backend-deployment.yaml);
+# `latest` is a placeholder for this reference manifest only — the real
+# deployment pins an exact digest in a private gitops overlay, not here.
+#
+# AGENT_MIGRATE_DSN must point at a role with CREATE ROLE / CREATE SCHEMA /
+# ALTER TABLE ... SET SCHEMA / GRANT rights (the migrations create the
+# agent_module role and schema). That is typically a privileged migration DSN,
+# distinct from the least-privilege POSTGRES_URL the service itself runs with.
+# =============================================================================
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-migrate
+  namespace: nekazari
+  labels:
+    app: agent-migrate
+    component: backend
+    module: agent
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: agent-migrate
+        module: agent
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          # Matches BACKEND_IMAGE in .github/workflows/build-push.yml
+          # (ghcr.io/${{ github.repository }}/agent-backend).
+          image: ghcr.io/nkz-os/nkz-module-agent/agent-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "scripts/run_migrations.py"]
+          env:
+            # Same secretKeyRef pattern the backend Deployment uses for
+            # POSTGRES_URL; see the comment at the top about needing a
+            # privileged DSN in production.
+            - name: AGENT_MIGRATE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-url
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
