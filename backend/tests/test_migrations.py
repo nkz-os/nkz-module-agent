@@ -12,12 +12,12 @@ from __future__ import annotations
 import inspect
 import os
 
+import app.db
 import asyncpg
 import pytest
-
-import app.db
 from app.config import get_settings
 from app.db import close_pool, get_pool
+
 from tests.conftest import MIGRATION_000, MIGRATION_001, MIGRATION_002, requires_db
 
 DSN = os.environ["POSTGRES_URL"]
@@ -294,6 +294,43 @@ async def test_audit_sequence_missing_grant_fails_with_permission_not_rls():
             )
         assert "sequence" in str(exc.value)
         assert "row-level security" not in str(exc.value)
+    finally:
+        await conn.execute("RESET ROLE")
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_identity_table_grants_work_for_agent_module_role():
+    """The 001 CRUD grants are exercised with the role that will use them.
+
+    The audit-table grants (002) are covered by the RLS tests; these three
+    identity tables had no test running as ``agent_module`` — a missing or
+    mistyped grant in 001 would otherwise surface only in production, after
+    the DSN swap. Full lifecycle as the role: INSERT, SELECT, UPDATE, DELETE.
+    """
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await conn.execute(MIGRATION_000.read_text())
+        await conn.execute(MIGRATION_001.read_text())
+        await conn.execute(MIGRATION_002.read_text())
+
+        await conn.execute("SET ROLE agent_module")
+        await conn.execute("SET search_path = agent_module, public")
+        await conn.execute(
+            "INSERT INTO agent_channel_links "
+            "(tenant_id, user_id, channel, channel_user_id) "
+            "VALUES ('tenant_a', 'u1', 'telegram', '42')"
+        )
+        seen = await conn.fetchval("SELECT count(*) FROM agent_channel_links")
+        assert seen == 1
+        await conn.execute(
+            "UPDATE agent_channel_links SET channel_user_id = '43' "
+            "WHERE tenant_id = 'tenant_a'"
+        )
+        await conn.execute("DELETE FROM agent_channel_links WHERE tenant_id = 'tenant_a'")
+        seen = await conn.fetchval("SELECT count(*) FROM agent_channel_links")
+        assert seen == 0
     finally:
         await conn.execute("RESET ROLE")
         await conn.close()

@@ -22,11 +22,6 @@ async def get_pool() -> asyncpg.Pool:
         # schema is resolved here rather than at every call site. Without this,
         # a plain connection's default search_path (``"$user", public``) would
         # not see them.
-        # The module owns its tables in the dedicated ``agent_module`` schema;
-        # the queries throughout app/ are intentionally unqualified, so the
-        # schema is resolved here rather than at every call site. Without this,
-        # a plain connection's default search_path (``"$user", public``) would
-        # not see them.
         _pool = await asyncpg.create_pool(
             require_postgres_url(),
             min_size=1,

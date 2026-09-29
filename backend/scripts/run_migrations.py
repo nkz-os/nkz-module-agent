@@ -17,7 +17,14 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
 
 async def _apply_migrations() -> None:
-    conn = await asyncpg.connect(os.environ["AGENT_MIGRATE_DSN"])
+    dsn = os.environ.get("AGENT_MIGRATE_DSN")
+    if not dsn:
+        raise SystemExit(
+            "AGENT_MIGRATE_DSN is not set: migrations need a privileged DSN "
+            "(CREATE ROLE / CREATE SCHEMA / ALTER TABLE ... SET SCHEMA / GRANT) "
+            "— the service's own POSTGRES_URL is NOT enough."
+        )
+    conn = await asyncpg.connect(dsn)
     try:
         for m in sorted(MIGRATIONS.glob("[0-9][0-9][0-9]_*.sql")):
             print(f"[migrate] applying {m.name}", flush=True)

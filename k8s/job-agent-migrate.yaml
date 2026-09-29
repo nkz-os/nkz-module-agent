@@ -8,8 +8,13 @@
 #
 # AGENT_MIGRATE_DSN must point at a role with CREATE ROLE / CREATE SCHEMA /
 # ALTER TABLE ... SET SCHEMA / GRANT rights (the migrations create the
-# agent_module role and schema). That is typically a privileged migration DSN,
-# distinct from the least-privilege POSTGRES_URL the service itself runs with.
+# agent_module role and schema). That is a privileged migration DSN,
+# deliberately distinct from the least-privilege POSTGRES_URL the service
+# itself runs with. NOTE: today both envs read the same key of
+# postgresql-secret because that secret IS the privileged URL — after the
+# DSN swap, the deployment moves to its own least-privilege secret while
+# this Job keeps pointing here on purpose. The private gitops overlay wires
+# the real value.
 # =============================================================================
 
 apiVersion: batch/v1
