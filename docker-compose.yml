@@ -1,0 +1,126 @@
+# =============================================================================
+# Agent - Local Development with Docker Compose
+# =============================================================================
+# Runs the backend API locally. The frontend is a Vite dev server (npm run dev),
+# not a Docker container — Module Federation 2.0 remotes don't ship a
+# standalone frontend image, they are built and uploaded to MinIO.
+#
+# Usage:
+#   docker-compose up        # Start backend
+#   docker-compose up -d     # Start in background
+#   docker-compose down      # Stop
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # Backend API server
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Agent
+      - APP_VERSION=1.0.0
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - API_PREFIX=/api/agent
+      - CORS_ORIGINS=["http://localhost:5003","http://localhost:5173"]
+      # Auth: this module trusts gateway-injected headers (X-Tenant-ID,
+      # X-User-ID, X-User-Roles) — no Keycloak/JWT config needed here.
+      - INTERNAL_SERVICE_SECRET=dev-only-secret-change-me
+      # Required — matches the `db` service below. app/main.py's startup
+      # lifespan fails fast without this set (see app/config.py). Never used
+      # for time-series/telemetry (Orion-LD subscriptions only). Schema is
+      # applied automatically on first boot — see the `db` service's volumes.
+      - POSTGRES_URL=postgresql://module:modulepass@db:5432/module_db
+      # Telegram channel adapter — set your own bot's values to exercise
+      # /webhook/telegram locally (e.g. via ngrok). Left empty here is fine
+      # for everything else; an unset secret fails closed, it does not crash.
+      - TELEGRAM_BOT_TOKEN=
+      - TELEGRAM_WEBHOOK_SECRET=
+      - TELEGRAM_BOT_USERNAME=
+      # Link tokens, dedupe, memory, registry cache, audit text retention.
+      - LINK_TOKEN_TTL_SECONDS=600
+      - DEDUPE_TTL_HOURS=24
+      - MEMORY_TTL_HOURS=24
+      - REGISTRY_CACHE_SECONDS=60
+      - AUDIT_TEXT_RETENTION_DAYS=90
+      # Core timeseries reader + module-backed read tools: empty disables the
+      # tool. HMAC_SECRET signs module -> core calls (dev-only value here).
+      - TIMESERIES_URL=
+      - WEATHER_MAP_URL=
+      - BIOORCH_API_URL=
+      - CUE_API_URL=
+      - HMAC_SECRET=dev-only-hmac-change-me
+      # Language model — per-deployment, empty by default (config.py). Unset
+      # is NOT a crash: the module starts, logs CRITICAL and answers with a
+      # not-configured notice (see docs/index.md).
+      - LLM_MODEL=
+      - LLM_API_BASE=
+      - LLM_API_KEY=
+      - LLM_TEMPERATURE=0.1
+      # Hard per-turn budget + spend caps (config.py defaults echoed here).
+      - MAX_ITERATIONS=4
+      - MAX_TOOL_CALLS=8
+      - MAX_TOKENS_PER_TURN=4000
+      - TURN_TIMEOUT_SECONDS=45
+      - MAX_TURNS_PER_TENANT_DAY=500
+      - MAX_TURNS_PER_ACCOUNT_HOUR=15
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # PostgreSQL database — required, see POSTGRES_URL above. Admin/metadata
+  # only (channel links, link tokens, update dedupe); never time-series.
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=module
+      - POSTGRES_PASSWORD=modulepass
+      - POSTGRES_DB=module_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Postgres only runs files here on an EMPTY data dir (first boot). The
+      # module owns its schema now (backend/migrations/), so these mount the
+      # real migrations in order instead of a hand-kept copy.
+      - ./backend/migrations/000_create_role.sql:/docker-entrypoint-initdb.d/000_create_role.sql:ro
+      - ./backend/migrations/001_agent_schema.sql:/docker-entrypoint-initdb.d/001_agent_schema.sql:ro
+      - ./backend/migrations/002_agent_turn_audit.sql:/docker-entrypoint-initdb.d/002_agent_turn_audit.sql:ro
+      - ./backend/migrations/003_conversation_state.sql:/docker-entrypoint-initdb.d/003_conversation_state.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U module"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+# =============================================================================
+# Optional Services - Uncomment if needed
+# =============================================================================
+
+  # Redis (uncomment if using Celery or caching)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  postgres_data:

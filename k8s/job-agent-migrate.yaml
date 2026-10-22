@@ -1,0 +1,58 @@
+# =============================================================================
+# Agent Migrate Job (reference template — public repo)
+# =============================================================================
+# One-shot job that applies backend/migrations/*.sql in order, idempotently.
+# Reuses the SAME image as the backend Deployment (k8s/backend-deployment.yaml);
+# `latest` is a placeholder for this reference manifest only — the real
+# deployment pins an exact digest in a private gitops overlay, not here.
+#
+# Platform contract: the nkz_module_agent login role is created and
+# password-managed by the platform (its DB-roles migration + sealed secret),
+# never by this repo. AGENT_MIGRATE_DSN only needs to bootstrap the
+# agent_module schema once (CREATE SCHEMA ... AUTHORIZATION); once the schema
+# exists, the module's own least-privilege POSTGRES_URL is sufficient for every
+# later migration — point this env at the module secret then. The private
+# gitops overlay wires the real value.
+# =============================================================================
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-migrate
+  namespace: nekazari
+  labels:
+    app: agent-migrate
+    component: backend
+    module: agent
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: agent-migrate
+        module: agent
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          # Matches BACKEND_IMAGE in .github/workflows/build-push.yml
+          # (ghcr.io/${{ github.repository }}/agent-backend).
+          image: ghcr.io/nkz-os/nkz-module-agent/agent-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "scripts/run_migrations.py"]
+          env:
+            # See the comment at the top: bootstrap DSN for the first run,
+            # the module's own DB URL afterwards.
+            - name: AGENT_MIGRATE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: module-db-secret
+                  key: url
+                  optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

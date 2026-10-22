@@ -1,0 +1,31 @@
+# Agent Backend
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+httpx>=0.26.0
+python-multipart>=0.0.32
+
+# Nekazari Platform SDK — gateway-header auth (require_auth/AuthContext),
+# OrionClient/SyncOrionClient for NGSI-LD. No JWKS/JWT validation here —
+# api-gateway already authenticated the request; this module trusts its
+# X-Tenant-ID / X-User-ID / X-User-Roles headers (see app/middleware).
+nkz-platform-sdk>=0.8.4
+
+# Database — required. The identity/link chain and inbound-update dedupe
+# are backed by PostgreSQL; app/main.py's startup lifespan fails fast
+# without it (see app/config.py:require_postgres_url).
+asyncpg>=0.29.0
+
+# LLM provider gateway (app/llm/provider.py — the only file that imports it).
+# Normalises tool-calling across providers so each deployment can pick its own
+# model. License verified 2026-09-23: MIT in everything the wheel installs.
+# The repo's enterprise/ dir carries a different license but ships in neither
+# the wheel nor the sdist (0 of 3324 files) — PyPI itself declares no license
+# classifier, so an automated scanner will report "unknown"; that is a gap in
+# the scan, not in the license.
+litellm>=1.102.1
+
+# Testing and dev-only tooling (pytest, black, ruff) live in
+# requirements-dev.txt, not here — this file is what the Dockerfile installs
+# into the production image.

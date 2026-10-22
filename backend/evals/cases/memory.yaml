@@ -1,0 +1,41 @@
+# 24 h conversation memory, scoped per tenant and channel user.
+
+# Follow-up in Basque resolves "the other one" from the stored thread (Parcela Sur, p2).
+- id: memory-followup-with-thread-eu
+  lang: eu
+  input: "Eta bestea?"
+  tools_available: [get_parcels, get_parcel_snapshot]
+  memory:
+    - {role: user, content: "Zein lursail ditut?"}
+    - {role: assistant, content: "Bi lursail dituzu: Parcela Norte (urn:ngsi-ld:AgriParcel:synthetic:p1) eta Parcela Sur (urn:ngsi-ld:AgriParcel:synthetic:p2). Parcela Norte aztertu dugu."}
+  expect:
+    tool_calls:
+      - name: get_parcel_snapshot
+        args_contain: {parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p2"}
+    reply:
+      contains_citation: true
+      language: eu
+
+# Same follow-up with no thread: the agent must ask which parcel, not guess.
+- id: memory-followup-no-thread-es
+  lang: es
+  input: "¿Y la otra parcela?"
+  tools_available: []
+  expect:
+    reply:
+      language: es
+      must_contain_any: ["cuál", "qué parcela", "a qué parcela"]
+
+# A thread stored for ANOTHER tenant must never reach this one: its parcel name cannot appear.
+- id: memory-other-tenant-no-leak-es
+  lang: es
+  input: "¿Y la otra parcela?"
+  tools_available: []
+  memory_owner: other_tenant
+  memory:
+    - {role: user, content: "¿Qué parcelas tengo?"}
+    - {role: assistant, content: "Tienes Parcela Norte y Parcela Sur."}
+  expect:
+    reply:
+      language: es
+      must_not_contain: ["Parcela Sur", "Parcela Norte"]

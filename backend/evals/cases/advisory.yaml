@@ -1,0 +1,27 @@
+# Crop trial evidence (module bioorchestrator): crop is an EPPO code, climate a Köppen class.
+
+# Evidence lookup with the adapter's real argument names, Spanish.
+- id: advisory-trial-evidence-es
+  lang: es
+  input: "¿Qué dicen los ensayos para el cultivo TRZAX en clima Csa?"
+  tools_available: [get_crop_trial_evidence]
+  expect:
+    tool_calls:
+      - name: get_crop_trial_evidence
+        args_contain: {crop: TRZAX, climate: Csa}
+    reply:
+      contains_citation: true
+      language: es
+
+# Same lookup in English, with the optional water regime.
+- id: advisory-trial-evidence-en
+  lang: en
+  input: "What do the trials say for crop TRZAX under climate Csa with irrigation (regadío)?"
+  tools_available: [get_crop_trial_evidence]
+  expect:
+    tool_calls:
+      - name: get_crop_trial_evidence
+        args_contain: {crop: TRZAX, climate: Csa, water_regime: "regadío"}
+    reply:
+      contains_citation: true
+      language: en

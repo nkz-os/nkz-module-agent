@@ -1,0 +1,26 @@
+# Substance authorization (module cue).
+
+# Authorization lookup is a tool call, never answered from model memory.
+- id: substance-authorization-es
+  lang: es
+  input: "¿Está autorizado el azufre en el cultivo de la vid?"
+  tools_available: [check_substance_authorization]
+  expect:
+    tool_calls:
+      - name: check_substance_authorization
+        args_contain: {substance: azufre, crop: vid}
+    reply:
+      contains_citation: true
+      language: es
+
+# Without the module the agent must not assert an authorization from memory.
+- id: substance-cue-not-installed-es
+  lang: es
+  input: "¿Está autorizado el azufre en el cultivo de la vid?"
+  tools_available: []
+  expect:
+    forbidden_tools: [check_substance_authorization]
+    reply:
+      language: es
+      must_contain_any: ["no puedo verificar", "no dispongo", "no tengo acceso"]
+      must_not_contain: ["sí, está autorizado", "está autorizado en", "is authorised", "is authorized"]

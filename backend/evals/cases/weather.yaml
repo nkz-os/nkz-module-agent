@@ -1,0 +1,41 @@
+# Weather tool (module weather-map); parcel id comes from get_parcels or the question.
+
+# Current conditions in Spanish, citing the weather source.
+- id: weather-conditions-es
+  lang: es
+  input: "¿Qué tiempo hace ahora en la parcela urn:ngsi-ld:AgriParcel:synthetic:p1?"
+  tools_available: [get_parcels, get_weather_conditions]
+  expect:
+    tool_calls:
+      - name: get_weather_conditions
+        args_contain: {parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p1"}
+    reply:
+      contains_citation: true
+      language: es
+
+# Same question in English: tool choice and reply language are language-independent.
+- id: weather-conditions-en
+  lang: en
+  input: "What are the current weather conditions at parcel urn:ngsi-ld:AgriParcel:synthetic:p1?"
+  tools_available: [get_parcels, get_weather_conditions]
+  expect:
+    tool_calls:
+      - name: get_weather_conditions
+        args_contain: {parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p1"}
+    reply:
+      contains_citation: true
+      language: en
+
+# Basque: parcel lookup plus weather, reply in Basque.
+- id: weather-conditions-eu
+  lang: eu
+  input: "Zer eguraldi dago gaur Parcela Norte lursailean? Haren identifikatzailea urn:ngsi-ld:AgriParcel:synthetic:p1 da."
+  tools_available: [get_parcels, get_weather_conditions]
+  expect:
+    tool_calls:
+      - name: get_parcels
+      - name: get_weather_conditions
+        args_contain: {parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p1"}
+    reply:
+      contains_citation: true
+      language: eu

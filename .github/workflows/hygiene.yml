@@ -1,0 +1,13 @@
+# This repo is public and installable, so it must name no deployment.
+# The check and its list of permitted hosts live in nkz-os/nkz, in one place.
+name: Hygiene
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  hygiene:
+    uses: nkz-os/nkz/.github/workflows/_public-repo-hygiene.yml@main
+    secrets: inherit

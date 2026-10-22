@@ -1,0 +1,213 @@
+# =============================================================================
+# Agent Backend Deployment
+# =============================================================================
+# Backend API service for Agent module
+# =============================================================================
+
+---
+# Deployment: Agent Backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-backend
+  namespace: nekazari
+  labels:
+    app: agent-backend
+    component: backend
+    module: agent
+    nkz-os.org/profile: addon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-backend
+  template:
+    metadata:
+      labels:
+        app: agent-backend
+        component: backend
+        module: agent
+    spec:
+      containers:
+        - name: backend
+          # Matches BACKEND_IMAGE in .github/workflows/build-push.yml
+          # (ghcr.io/${{ github.repository }}/agent-backend). `latest` is a
+          # placeholder for this reference manifest only — the real
+          # deployment pins an exact digest in a private gitops overlay, not
+          # here.
+          image: ghcr.io/nkz-os/nkz-module-agent/agent-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          # Non-secret config (service URLs, CORS origins) belongs in a
+          # ConfigMap overlay in gitops-config/overlays/modules/agent/ —
+          # NOT in this public repo. `optional: true` so config.py's own
+          # defaults apply when the ConfigMap doesn't exist (e.g. local dev).
+          envFrom:
+            - configMapRef:
+                name: agent-config
+                optional: true
+          env:
+            - name: APP_NAME
+              value: "Agent"
+            - name: APP_VERSION
+              value: "1.0.0"
+            - name: DEBUG
+              value: "false"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: API_PREFIX
+              value: "/api/agent"
+            # CORS — explicit origin whitelist (never *). This is a local
+            # placeholder; the production value lives in the ConfigMap overlay.
+            - name: CORS_ORIGINS
+              value: '["https://your-frontend-domain"]'
+            # Auth: this module trusts gateway-injected headers (X-Tenant-ID,
+            # X-User-ID, X-User-Roles) via nkz_platform_sdk.auth.require_auth —
+            # no Keycloak/JWT config needed here (see app/middleware).
+            # Internal service-to-service auth (/internal/* routes only) —
+            # shared K8s Secret, hmac.compare_digest verification.
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: INTERNAL_SERVICE_SECRET
+                  optional: true
+            # Admin/metadata store (channel links, link tokens, update
+            # dedupe) — NEVER time-series, which flows through Orion-LD
+            # subscriptions only. Core dependency: app/main.py's lifespan
+            # calls require_postgres_url() and refuses to start without it
+            # (see app/config.py), so a missing/renamed secret here fails
+            # the deployment loudly instead of a pod that reports healthy
+            # and silently drops every turn.
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-url
+            # Telegram channel adapter. Peripheral, not core: unset here
+            # fails closed per-request (webhook 401s, replies are skipped
+            # and logged CRITICAL) rather than crashing the pod — see
+            # app/api/webhook.py (_authorised / send_reply).
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-telegram-secret
+                  key: bot-token
+                  optional: true
+            - name: TELEGRAM_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: agent-telegram-secret
+                  key: webhook-secret
+                  optional: true
+            # Not a secret (a public @username), but instance-specific — the
+            # production value lives in the ConfigMap overlay.
+            - name: TELEGRAM_BOT_USERNAME
+              value: "your_bot_username"
+            # Account linking / inbound dedupe / conversational memory /
+            # tool-registry cache / audit text retention (config.py defaults).
+            - name: LINK_TOKEN_TTL_SECONDS
+              value: "600"
+            - name: DEDUPE_TTL_HOURS
+              value: "24"
+            - name: MEMORY_TTL_HOURS
+              value: "24"
+            - name: REGISTRY_CACHE_SECONDS
+              value: "60"
+            - name: AUDIT_TEXT_RETENTION_DAYS
+              value: "90"
+            # Core timeseries reader and module-backed read tools. Empty here:
+            # the real in-cluster URLs live in the ConfigMap overlay (agent-config
+            # above), never in this public repo. An empty URL disables that tool.
+            - name: TIMESERIES_URL
+              value: ""
+            - name: WEATHER_MAP_URL
+              value: ""
+            - name: BIOORCH_API_URL
+              value: ""
+            - name: CUE_API_URL
+              value: ""
+            # Shared with api-gateway/entity-manager; the production value
+            # lives in the cluster secret.
+            - name: HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
+                  optional: true
+            # Language model — per-deployment, no hardcoded model/endpoint.
+            # Peripheral, not core: unset means the module starts, logs
+            # CRITICAL and answers with a not-configured notice instead of
+            # crashing the pod (see docs/index.md). LLM_API_KEY comes from a
+            # Secret; the rest are non-secret config whose production values
+            # live in the ConfigMap overlay (agent-config above).
+            - name: LLM_MODEL
+              value: ""
+            - name: LLM_API_BASE
+              value: ""
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-llm-secret
+                  key: api-key
+                  optional: true
+            - name: LLM_TEMPERATURE
+              value: "0.1"
+            # Hard per-turn budget — without these an agent can loop, and a
+            # loop on a public endpoint is unbounded spend and latency.
+            - name: MAX_ITERATIONS
+              value: "4"
+            - name: MAX_TOOL_CALLS
+              value: "8"
+            - name: MAX_TOKENS_PER_TURN
+              value: "4000"
+            - name: TURN_TIMEOUT_SECONDS
+              value: "45"
+            # Spend caps — finite by default (money on a public route).
+            - name: MAX_TURNS_PER_TENANT_DAY
+              value: "500"
+            - name: MAX_TURNS_PER_ACCOUNT_HOUR
+              value: "15"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+---
+# Service: Agent Backend API
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-api-service
+  namespace: nekazari
+  labels:
+    app: agent-backend
+    module: agent
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: agent-backend

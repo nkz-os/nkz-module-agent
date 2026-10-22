@@ -1,0 +1,54 @@
+# Core read-only tools (no module required).
+
+# Lists the tenant's parcels with one core call.
+- id: core-list-parcels-es
+  lang: es
+  input: "¿Qué parcelas tengo dadas de alta?"
+  tools_available: [get_parcels]
+  expect:
+    tool_calls:
+      - name: get_parcels
+    reply:
+      contains_citation: true
+      language: es
+
+# Reads one parcel by URN taken from the question, answers in English.
+- id: core-parcel-snapshot-en
+  lang: en
+  input: "What is the current status of parcel urn:ngsi-ld:AgriParcel:synthetic:p1?"
+  tools_available: [get_parcels, get_parcel_snapshot]
+  expect:
+    tool_calls:
+      - name: get_parcel_snapshot
+        args_contain: {parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p1"}
+    reply:
+      contains_citation: true
+      language: en
+
+# Time series with real argument names (metric enum, days).
+- id: core-timeseries-7d-es
+  lang: es
+  input: "¿Cómo ha evolucionado la humedad del suelo en la parcela urn:ngsi-ld:AgriParcel:synthetic:p1 los últimos 7 días?"
+  tools_available: [get_parcels, get_timeseries]
+  expect:
+    tool_calls:
+      - name: get_timeseries
+        args_contain:
+          parcel_id: "urn:ngsi-ld:AgriParcel:synthetic:p1"
+          metric: soil_moisture
+          days: 7
+    reply:
+      contains_citation: true
+      language: es
+
+# Basque: parcel listing, reply must come back in Basque.
+- id: core-list-parcels-eu
+  lang: eu
+  input: "Zein lursail ditut?"
+  tools_available: [get_parcels]
+  expect:
+    tool_calls:
+      - name: get_parcels
+    reply:
+      contains_citation: true
+      language: eu

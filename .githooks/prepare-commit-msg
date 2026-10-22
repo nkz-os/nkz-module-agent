@@ -1,0 +1,18 @@
+#!/bin/sh
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+tmp=$(mktemp)
+sed \
+  -e '/^[Cc][Oo]-[Aa]uthored-[Bb]y:/d' \
+  -e '/^[Cc]laude-[Ss]ession:/d' \
+  -e '/claude\.ai\/code\/session/d' \
+  -e '/[Gg]enerated with .*[Cc]laude/d' \
+  -e '/noreply@anthropic\.com/d' \
+  -e '/^[Mm]ade-[Ww]ith:/d' \
+  -e '/^[Mm]ade [Ww]ith [Cc]ursor/d' \
+  -e '/^[Mm]ade [Bb]y [Cc]ursor/d' \
+  -e '/^[Mm]ade-with: [Cc]ursor/d' \
+  -e '/cursoragent@cursor\.com/d' \
+  -e '/^[Cc]ursor-Agent:/d' \
+  "$MSG_FILE" > "$tmp" && mv "$tmp" "$MSG_FILE"
+exit 0
