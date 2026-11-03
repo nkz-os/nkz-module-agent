@@ -85,6 +85,10 @@ async def _current_view(tenant_id: str) -> dict:
 def _valid_model(model: str) -> bool:
     if not model or len(model) > _MODEL_MAX_LEN:
         return False
+    # "://" would let some LiteLLM providers use the model as the request URL,
+    # bypassing the endpoint allowlist.
+    if "://" in model:
+        return False
     return not any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in model)
 
 
@@ -188,7 +192,9 @@ async def test_llm_config(
         error = exc.notice or "not_configured"
     except llm_provider.LLMProviderError as exc:
         origin = exc.origin or "none"
-        error = str(exc)[:300] or "provider_error"
+        # Fixed code only: provider text may carry more than the tenant should
+        # see. The sanitized detail is already logged by the provider facade.
+        error = "provider_error"
     except Exception:
         logger.exception("llm_config_test_failed tenant_id=%s", user.tenant_id)
         error = "provider_error"

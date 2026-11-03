@@ -411,6 +411,27 @@ async def test_blocked_tenant_never_calls_provider_even_with_platform(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_stored_url_model_never_reaches_the_provider(monkeypatch):
+    from app.llm import resolver
+
+    async def fail_if_called(**kwargs):
+        raise AssertionError("acompletion must not be called for a URL model")
+
+    _tenant_setup(monkeypatch)
+    real_get = resolver.configs.get
+
+    async def url_model(tenant_id):
+        import dataclasses
+        return dataclasses.replace(await real_get(tenant_id), model="http://orion.internal/x")
+
+    monkeypatch.setattr(resolver.configs, "get", url_model)
+    monkeypatch.setattr("app.llm.provider.acompletion", fail_if_called)
+    with pytest.raises(LLMUnconfigured) as exc_info:
+        await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
+    assert exc_info.value.notice == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_tenant_key_in_provider_error_is_redacted(monkeypatch, caplog):
     import traceback
 

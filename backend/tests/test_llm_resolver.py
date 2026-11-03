@@ -152,3 +152,20 @@ async def test_resolved_provider_is_frozen():
     got = ResolvedProvider(model="m", api_base="", api_key="", origin="none")
     with pytest.raises(dataclasses.FrozenInstanceError):
         got.model = "other"
+
+
+@pytest.mark.parametrize("model", ["http://orion.internal:1026/x", "HTTPS://h.example.test/m"])
+async def test_stored_url_model_is_blocked(monkeypatch, tenant_row, model):
+    _configure_platform(monkeypatch)
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    tenant_row["row"] = _row(model=model)
+    got = await resolve_provider("tenant-a")
+    assert got.origin == "none" and got.notice == "blocked"
+    assert got.api_key == "" and got.model == ""
+
+
+async def test_resolved_provider_repr_hides_the_key(monkeypatch, tenant_row):
+    tenant_row["row"] = _row()
+    got = await resolve_provider("tenant-a")
+    assert got.api_key == KEY
+    assert KEY not in repr(got) and KEY not in str(got)

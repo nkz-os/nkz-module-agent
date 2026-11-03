@@ -239,3 +239,18 @@ async def test_real_role_dependency_rejects_farmer(db_pool):
             r = await c.request(method, url, headers=h)
             assert r.status_code in (401, 403), (url, r.status_code)
             assert r.status_code == 403 or "signature" in r.text.lower()
+
+
+@pytest.mark.parametrize("model", [
+    "http://orion.internal:1026/x", "HTTPS://host.example.test/m",
+    "ftp://x", "a/b://c",
+])
+async def test_model_with_url_scheme_is_refused(client, model):
+    r = await client.put("/api/agent/llm-config", json=body(model=model))
+    assert r.status_code == 422 and err_code(r) == "invalid_model"
+    assert (await client.get("/api/agent/llm-config")).json()["configured"] is False
+
+
+async def test_hf_style_model_name_still_accepted(client):
+    r = await client.put("/api/agent/llm-config", json=body(model="org/model:v2"))
+    assert r.status_code == 200

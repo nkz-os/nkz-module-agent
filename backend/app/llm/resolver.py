@@ -14,7 +14,7 @@ key lives only in the ResolvedProvider built for that one call.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from app.config import get_settings
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class ResolvedProvider:
     model: str
     api_base: str
-    api_key: str
+    api_key: str = field(repr=False)
     origin: Literal["tenant", "platform", "none"]
     # The provider name for LiteLLM's custom_llm_provider (tenant origin only).
     provider: str = ""
@@ -52,6 +52,11 @@ async def tenant_provider(tenant_id: str | None) -> ResolvedProvider | None:
 
     settings = get_settings()
     allowlist = parse(settings.llm_endpoint_allowlist)
+    # A URL as model name can redirect some LiteLLM providers past the
+    # allowlist; rows saved before the API refused it must not be used.
+    if "://" in row.model:
+        logger.warning("byok_model_blocked tenant_id=%s", tenant_id)
+        return _none("blocked")
     if not allowlist.allows(row.provider, row.api_base):
         logger.warning(
             "byok_endpoint_blocked tenant_id=%s provider=%s", tenant_id, row.provider
