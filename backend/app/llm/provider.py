@@ -93,6 +93,7 @@ async def complete(
     tools: list[dict] | None = None,
     *,
     tenant_id: str | None = None,
+    max_tokens: int | None = None,
 ) -> LLMReply:
     """Send one completion request to the provider resolved for the tenant.
 
@@ -120,6 +121,8 @@ async def complete(
         kwargs["custom_llm_provider"] = resolved.provider
     if tools:
         kwargs["tools"] = tools
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
 
     try:
         response = await acompletion(**kwargs)
@@ -147,3 +150,19 @@ async def complete(
         # `from None`: suppress __context__ so nothing prints the original
         # (possibly unredacted) exception via traceback chaining.
         raise LLMProviderError(detail, origin=resolved.origin) from None
+
+
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    """USD estimate from LiteLLM's price table; None when it cannot say
+    (unknown model, any error)."""
+    try:
+        import litellm
+
+        prompt_cost, completion_cost = litellm.cost_per_token(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return float(prompt_cost) + float(completion_cost)
+    except Exception:
+        return None

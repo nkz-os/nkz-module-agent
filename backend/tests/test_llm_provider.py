@@ -426,3 +426,9 @@ async def test_tenant_key_in_provider_error_is_redacted(monkeypatch, caplog):
     assert TENANT_KEY not in str(exc_info.value)
     assert TENANT_KEY not in "".join(traceback.format_exception(exc_info.value))
     assert TENANT_KEY not in caplog.text
+
+
+def test_estimate_cost_is_none_for_an_unknown_model():
+    from app.llm.provider import estimate_cost
+
+    assert estimate_cost("nonexistent/model-xyz", 10, 5) is None
