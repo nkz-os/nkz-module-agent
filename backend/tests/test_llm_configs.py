@@ -105,3 +105,53 @@ async def test_unavailable_encryption_stores_nothing(db_pool, monkeypatch):
     with pytest.raises(configs.BYOKUnavailable):
         await _save()
     assert await configs.get("tenant-a") is None
+
+
+async def _prod_role_pool():
+    """Pool running as the production role (owner, still bound by FORCE RLS)."""
+    import os
+
+    import asyncpg
+
+    async def _init(conn):
+        await conn.execute("SET ROLE nkz_module_agent")
+        await conn.execute("SET search_path = agent_module, public")
+
+    async def _no_reset(conn):
+        pass
+
+    return await asyncpg.create_pool(
+        os.environ["POSTGRES_URL"], min_size=1, max_size=1, init=_init, reset=_no_reset,
+    )
+
+
+async def test_isolation_under_forced_rls(db_pool, monkeypatch):
+    pool = await _prod_role_pool()
+    try:
+        async def _get_pool():
+            return pool
+
+        monkeypatch.setattr("app.llm.configs.get_pool", _get_pool)
+
+        a = await _save("tenant-a")
+        assert await configs.get("tenant-a") == a
+
+        # Without the tenant context the policy hides every row: set_config is load-bearing.
+        async with pool.acquire() as conn:
+            assert await conn.fetchval("SELECT count(*) FROM tenant_llm_configs") == 0
+
+        assert await configs.get("tenant-b") is None
+        assert await configs.delete("tenant-b") is False
+        assert (await configs.get("tenant-a")) == a
+
+        # tenant-b's key-less upsert must not see tenant-a's row.
+        with pytest.raises(configs.KeyRequired):
+            await _save("tenant-b", api_key=None)
+        b = await _save("tenant-b", model="mb", api_key="sk-bbbb-0000")
+        assert b.tenant_id == "tenant-b"
+        assert (await configs.get("tenant-a")) == a
+        assert (await configs.get("tenant-b")) == b
+        assert await configs.delete("tenant-b") is True
+        assert (await configs.get("tenant-a")) == a
+    finally:
+        await pool.close()
