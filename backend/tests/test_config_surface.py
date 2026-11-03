@@ -21,6 +21,11 @@ def _expected() -> set[str]:
     return {name.upper() for name in Settings.model_fields}
 
 
+# Read by nkz-platform-sdk from the environment, not by Settings; the k8s
+# template must set it (the SDK verifies the gateway signature only then).
+_SDK_ENV = {"REQUIRE_HMAC_SIGNATURE"}
+
+
 def _assert_same(found: set[str], surface: str) -> None:
     expected = _expected()
     missing = sorted(expected - found)
@@ -81,7 +86,14 @@ def test_k8s_template_declares_every_setting():
     )
     containers = deployment["spec"]["template"]["spec"]["containers"]
     container = next(c for c in containers if c["name"] == "backend")
-    _assert_same({e["name"] for e in container["env"]}, "k8s/backend-deployment.yaml")
+    names = {e["name"] for e in container["env"]}
+    assert _SDK_ENV <= names, "k8s template must set the SDK env"
+    env = {e["name"]: e for e in container["env"]}
+    assert env["REQUIRE_HMAC_SIGNATURE"]["value"] == "true"
+    # ConfigMap-owned settings must not carry an explicit value that shadows it.
+    for key in ("LLM_ENDPOINT_ALLOWLIST", "LLM_PLATFORM_FALLBACK"):
+        assert "value" not in env[key] and env[key]["valueFrom"]["configMapKeyRef"]["optional"]
+    _assert_same(names - _SDK_ENV, "k8s/backend-deployment.yaml")
     _assert_values(
         {e["name"]: e["value"] for e in container["env"] if "value" in e},
         "k8s/backend-deployment.yaml",
