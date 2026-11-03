@@ -155,6 +155,18 @@ spec:
                   optional: true
             - name: LLM_TEMPERATURE
               value: "0.1"
+            # Per-tenant LLM config (BYOK). Master keys come from a Secret;
+            # unset = BYOK unavailable (logged CRITICAL, service keeps running).
+            - name: LLM_KEY_ENCRYPTION_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: agent-llm-secret
+                  key: key-encryption-keys
+                  optional: true
+            - name: LLM_ENDPOINT_ALLOWLIST
+              value: ""
+            - name: LLM_PLATFORM_FALLBACK
+              value: "false"
             # Hard per-turn budget — without these an agent can loop, and a
             # loop on a public endpoint is unbounded spend and latency.
             - name: MAX_ITERATIONS
@@ -162,6 +174,8 @@ spec:
             - name: MAX_TOOL_CALLS
               value: "8"
             - name: MAX_TOKENS_PER_TURN
+              value: "4000"
+            - name: MAX_TOKENS_PER_TURN_CEILING
               value: "4000"
             - name: TURN_TIMEOUT_SECONDS
               value: "45"

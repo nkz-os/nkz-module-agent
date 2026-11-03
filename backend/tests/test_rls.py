@@ -200,3 +200,42 @@ async def test_tenant_context_does_not_survive_the_transaction(db_pool, monkeypa
     finally:
         await pool.close()
         await _drop_probe_role(db_pool)
+
+
+async def test_tenant_llm_configs_rls_isolates_tenants(db_pool):
+    """Under the module's own role, a tenant sees only its row and cannot
+    insert one for another tenant (FORCE RLS applies to the owner)."""
+    insert = (
+        "INSERT INTO tenant_llm_configs "
+        "(tenant_id, provider, model, api_key_ciphertext, api_key_last4, "
+        "updated_by) VALUES ($1,'p','m',$2,'abcd','u')"
+    )
+    async with db_pool.acquire() as conn:
+        await conn.execute("SET ROLE nkz_module_agent")
+        try:
+            for tenant in ("tenant-a", "tenant-b"):
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('app.current_tenant', $1, true)", tenant
+                    )
+                    await conn.execute(insert, tenant, b"\x01")
+
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_tenant', 'tenant-a', true)"
+                )
+                rows = await conn.fetch("SELECT tenant_id FROM tenant_llm_configs")
+                assert [r["tenant_id"] for r in rows] == ["tenant-a"]
+
+            # Cross-tenant write is rejected by the policy's WITH CHECK.
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('app.current_tenant', 'tenant-a', true)"
+                    )
+                    await conn.execute(insert, "tenant-c", b"\x02")
+
+            # No context at all: nothing visible.
+            assert await conn.fetchval("SELECT count(*) FROM tenant_llm_configs") == 0
+        finally:
+            await conn.execute("RESET ROLE")
