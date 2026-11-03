@@ -28,7 +28,7 @@ from app.agent.budget import BudgetExhausted, TurnBudget
 from app.agent.prompt import MAX_PAYLOAD as _FENCE_MAX_CHARS
 from app.agent.prompt import system_prompt, wrap_untrusted
 from app.domain.session import SessionContext
-from app.llm.provider import LLMUnconfigured, complete
+from app.llm.provider import LLMProviderError, LLMUnconfigured, complete
 from app.tools.catalog import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -193,6 +193,14 @@ class TurnResult:
     llm_origin: str | None = None
 
 
+def _failure_origin(exc: Exception, known: str | None) -> str:
+    """Whose provider a failed turn used; "none" if it never got that far
+    (e.g. the tenant config read itself failed)."""
+    if isinstance(exc, LLMProviderError) and exc.origin:
+        return exc.origin
+    return known or "none"
+
+
 async def run_turn(
     user_text: str, budget: TurnBudget, ctx: SessionContext
 ) -> TurnResult:
@@ -311,9 +319,9 @@ async def run_turn(
             tool_calls=tuple(seen_calls),
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
-            llm_origin=llm_origin,
+            llm_origin=llm_origin or "none",
         )
-    except Exception:
+    except Exception as exc:
         # Anything else: a provider failure (LLMProviderError, already
         # sanitized by the facade) or a genuinely unexpected bug. Neither
         # gets its own outcome value -- the audit CHECK constraint has none
@@ -327,7 +335,7 @@ async def run_turn(
             tool_calls=tuple(seen_calls),
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
-            llm_origin=llm_origin,
+            llm_origin=_failure_origin(exc, llm_origin),
         )
 
 

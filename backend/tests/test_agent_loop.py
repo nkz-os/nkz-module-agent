@@ -132,6 +132,30 @@ async def test_unconfigured_notice_selects_text_and_origin_none(
 
 
 @pytest.mark.asyncio
+async def test_provider_error_records_the_failing_origin(monkeypatch):
+    from app.llm.provider import LLMProviderError
+
+    async def boom(*a, **k):
+        raise LLMProviderError("401", origin="tenant")
+
+    monkeypatch.setattr("app.agent.loop.complete", boom)
+    r = await run_turn("hola", _budget(), _ctx())
+    assert r.outcome == "error"
+    assert r.llm_origin == "tenant"
+
+
+@pytest.mark.asyncio
+async def test_resolver_failure_records_origin_none(monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.agent.loop.complete", boom)
+    r = await run_turn("hola", _budget(), _ctx())
+    assert r.outcome == "error"
+    assert r.llm_origin == "none"
+
+
+@pytest.mark.asyncio
 async def test_reply_origin_reaches_the_turn_result(monkeypatch):
     async def fake(messages, tools=None, tenant_id=None):
         return LLMReply(text="hola", tool_calls=(), tokens_prompt=1,

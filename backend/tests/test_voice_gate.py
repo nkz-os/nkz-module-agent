@@ -56,7 +56,7 @@ async def _audit(db_pool, trace_id):
     async with db_pool.acquire() as c:
         return await c.fetch(
             "SELECT outcome, reply_text, inbound_text, model, tokens_prompt, "
-            "tokens_completion FROM agent_turn_audit WHERE trace_id=$1", trace_id)
+            "tokens_completion, llm_origin FROM agent_turn_audit WHERE trace_id=$1", trace_id)
 
 
 async def test_voice_note_is_refused_before_quota_and_model(
@@ -77,6 +77,7 @@ async def test_voice_note_is_refused_before_quota_and_model(
     assert row["model"] is None
     assert row["tokens_prompt"] == 0
     assert row["tokens_completion"] == 0
+    assert row["llm_origin"] == "none"
     assert FILE_ID not in caplog.text
 
 
@@ -94,6 +95,7 @@ async def test_contentless_message_is_refused_before_quota_and_model(
     assert len(rows) == 1
     assert rows[0]["outcome"] == "refused"
     assert rows[0]["reply_text"] == "empty_message"
+    assert rows[0]["llm_origin"] == "none"
     assert rows[0]["inbound_text"] is None
 
 

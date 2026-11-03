@@ -152,3 +152,20 @@ def test_language_heuristic():
     assert harness.detect_language("the soil is dry and your field is fine") == "en"
     assert harness.detect_language("zure lursail da eta eguraldi ona dago") == "eu"
     assert harness.detect_language("HACKED") is None
+
+
+@pytest.mark.asyncio
+async def test_live_provider_wrapper_uses_platform_branch_only(monkeypatch):
+    """Live evals pass tenant_id=None so no tenant config (DB) is read."""
+    from evals.harness import LiveProvider
+
+    seen = {}
+
+    async def fake_complete(messages, tools=None, *, tenant_id="unset"):
+        seen["tenant_id"] = tenant_id
+        return "reply"
+
+    monkeypatch.setattr("evals.harness.provider_complete", fake_complete)
+    wrapper = LiveProvider().complete_for(object())
+    assert await wrapper([{"role": "user", "content": "x"}], None, tenant_id="tenant-a") == "reply"
+    assert seen["tenant_id"] is None

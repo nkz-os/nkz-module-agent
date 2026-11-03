@@ -67,7 +67,7 @@ async def _refuse(
     """
     result = TurnResult(
         text=marker, outcome="refused", model=None, tool_calls=(),
-        tokens_prompt=0, tokens_completion=0,
+        tokens_prompt=0, tokens_completion=0, llm_origin="none",
     )
     latency_ms = int((time.monotonic() - started) * 1000)
     await record_turn(session, None, result, latency_ms, trace_id)

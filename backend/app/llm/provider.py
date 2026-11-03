@@ -51,7 +51,12 @@ class LLMProviderError(Exception):
     """Raised when a configured provider call fails, for any reason.
 
     The message is sanitized: the configured API key never appears in it.
+    `origin` says whose provider failed (tenant/platform) for the audit.
     """
+
+    def __init__(self, message: str = "", origin: str | None = None):
+        super().__init__(message)
+        self.origin = origin
 
 
 @dataclass(frozen=True)
@@ -141,4 +146,4 @@ async def complete(
         )
         # `from None`: suppress __context__ so nothing prints the original
         # (possibly unredacted) exception via traceback chaining.
-        raise LLMProviderError(detail) from None
+        raise LLMProviderError(detail, origin=resolved.origin) from None
