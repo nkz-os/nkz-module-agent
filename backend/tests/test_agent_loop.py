@@ -107,6 +107,20 @@ async def test_unconfigured_model_yields_a_usable_message(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_unconfigured_turn_logs_a_warning_not_critical(monkeypatch, caplog):
+    import logging
+
+    async def boom(*a, **k):
+        raise LLMUnconfigured("not set", notice="blocked")
+
+    monkeypatch.setattr("app.agent.loop.complete", boom)
+    with caplog.at_level(logging.DEBUG, logger="app.agent.loop"):
+        await run_turn("hola", _budget(), _ctx())
+    recs = [r for r in caplog.records if "llm_unconfigured" in r.getMessage()]
+    assert recs and all(r.levelno == logging.WARNING for r in recs)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "notice,expected",
     [

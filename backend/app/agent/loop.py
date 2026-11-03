@@ -298,7 +298,7 @@ async def run_turn(
                 )
 
     except LLMUnconfigured as exc:
-        logger.critical(
+        logger.warning(
             "llm_unconfigured tenant_id=%s notice=%s", ctx.tenant_id, exc.notice
         )
         return TurnResult(
