@@ -24,7 +24,7 @@ ROLES = {"value": ("TenantAdmin",)}
 async def client(monkeypatch, db_pool):
     monkeypatch.setenv("LLM_KEY_ENCRYPTION_KEYS", Fernet.generate_key().decode())
     monkeypatch.setenv(
-        "LLM_ENDPOINT_ALLOWLIST", f"openai@{BASE.rsplit('/v1', 1)[0]},anthropic"
+        "LLM_ENDPOINT_ALLOWLIST", f"openai@{BASE.rsplit('/v1', 1)[0]},provider-a"
     )
     monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "4000")
     get_settings.cache_clear()
@@ -81,7 +81,7 @@ async def test_get_unconfigured(client):
     j = r.json()
     assert j["configured"] is False and j["byok_available"] is True
     assert j["ceiling"] == 4000 and j["notice"] is None
-    assert {"provider": "anthropic", "origin": None} in j["allowed"]
+    assert {"provider": "provider-a", "origin": None} in j["allowed"]
 
 
 async def test_put_happy_path_and_get_never_leak_key(client):
@@ -103,7 +103,7 @@ async def test_provider_normalized(client):
                          json=body(provider=" OpenAI ", api_key=KEY))
     assert r.status_code == 200 and r.json()["provider"] == "openai"
     r = await client.put("/api/agent/llm-config",
-                         json=body(provider=" Anthropic", api_base=None, api_key=None))
+                         json=body(provider=" Provider-A", api_base=None, api_key=None))
     assert r.status_code == 422 and err_code(r) == "key_required"
 
 
@@ -137,7 +137,7 @@ async def test_endpoint_not_allowed(client):
     for over in ({"api_base": "http://orion-ld-service:1026"},
                  {"api_base": "http://169.254.169.254"},
                  {"provider": "unlisted", "api_base": None},
-                 {"provider": "anthropic"}):  # bare entry forbids api_base
+                 {"provider": "provider-a"}):  # bare entry forbids api_base
         r = await client.put("/api/agent/llm-config", json=body(**over))
         assert r.status_code == 422 and err_code(r) == "endpoint_not_allowed", over
 
@@ -166,7 +166,7 @@ async def test_provider_change_with_empty_key_never_reuses_old_key(client):
     assert (await client.put("/api/agent/llm-config", json=body())).status_code == 200
     before = await configs.get("tenant-a")
     r = await client.put("/api/agent/llm-config",
-                         json=body(provider="anthropic", api_base=None, api_key=""))
+                         json=body(provider="provider-a", api_base=None, api_key=""))
     assert r.status_code == 422 and err_code(r) == "key_required"
     after = await configs.get("tenant-a")
     assert after.provider == "openai"
@@ -200,7 +200,7 @@ async def test_delete(client):
 
 async def test_notice_blocked_after_allowlist_narrowed(client, monkeypatch):
     await client.put("/api/agent/llm-config", json=body())
-    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "anthropic")
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "provider-a")
     get_settings.cache_clear()
     j = (await client.get("/api/agent/llm-config")).json()
     assert j["configured"] is True and j["notice"] == "blocked"

@@ -327,14 +327,14 @@ async def test_complete_resolver_none_never_calls_the_provider(monkeypatch):
 TENANT_KEY = "sk-tenant-CANARY-77be"
 
 
-def _tenant_setup(monkeypatch, *, allowlist="anthropic"):
+def _tenant_setup(monkeypatch, *, allowlist="provider-a"):
     from datetime import datetime, timezone
 
     from app.llm import resolver
     from app.llm.configs import TenantLLMConfig
 
     row = TenantLLMConfig(
-        tenant_id="tenant-a", provider="anthropic", model="m1", api_base=None,
+        tenant_id="tenant-a", provider="provider-a", model="m1", api_base=None,
         api_key_ciphertext=TENANT_KEY.encode(), api_key_last4="77be",
         max_tokens_per_turn=None, updated_by="u", updated_at=datetime.now(timezone.utc),
     )
@@ -376,8 +376,8 @@ async def test_tenant_call_passes_provider_and_key(monkeypatch):
     _tenant_setup(monkeypatch)
     monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
     reply = await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
-    assert seen["model"] == "anthropic/m1"
-    assert seen["custom_llm_provider"] == "anthropic"
+    assert seen["model"] == "provider-a/m1"
+    assert seen["custom_llm_provider"] == "provider-a"
     assert seen["api_key"] == TENANT_KEY
     assert "api_base" not in seen
     assert reply.origin == "tenant"
@@ -403,7 +403,7 @@ async def test_blocked_tenant_never_calls_provider_even_with_platform(monkeypatc
     async def fail_if_called(**kwargs):
         raise AssertionError("acompletion must not be called for a blocked tenant")
 
-    _tenant_setup(monkeypatch, allowlist="deepseek")
+    _tenant_setup(monkeypatch, allowlist="provider-c")
     monkeypatch.setattr("app.llm.provider.acompletion", fail_if_called)
     with pytest.raises(LLMUnconfigured) as exc_info:
         await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")

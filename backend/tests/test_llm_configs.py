@@ -53,7 +53,7 @@ async def test_blank_key_counts_as_no_key(db_pool):
 async def test_provider_change_requires_key(db_pool):
     await _save()
     with pytest.raises(configs.KeyRequired):
-        await _save(api_key=None, provider="mistral")
+        await _save(api_key=None, provider="provider-b")
     assert (await configs.get("tenant-a")).provider == "openai"
 
 
@@ -86,7 +86,7 @@ async def test_model_and_budget_change_keep_ciphertext(db_pool):
 
 async def test_new_key_replaces_ciphertext_and_blank_api_base_is_none(db_pool):
     await _save()
-    again = await _save(api_key="sk-new-zz99", provider="mistral", api_base="   ")
+    again = await _save(api_key="sk-new-zz99", provider="provider-b", api_base="   ")
     assert again.api_base is None
     assert again.api_key_last4 == "zz99"
     assert keys.decrypt(again.api_key_ciphertext) == "sk-new-zz99"

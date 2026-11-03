@@ -36,7 +36,7 @@ pytestmark = pytest.mark.asyncio
 KEY = "sk-test-CANARY-91ac"
 
 
-def _row(provider="anthropic", model="m1", api_base=None, key=KEY):
+def _row(provider="provider-a", model="m1", api_base=None, key=KEY):
     from app.llm.configs import TenantLLMConfig
     from datetime import datetime, timezone
 
@@ -57,7 +57,7 @@ def tenant_row(monkeypatch):
 
     monkeypatch.setattr(resolver.configs, "get", fake_get)
     monkeypatch.setattr(resolver.keys, "decrypt", lambda ct: ct.decode())
-    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "anthropic")
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "provider-a")
     return state
 
 
@@ -98,8 +98,8 @@ async def test_allowed_row_resolves_to_tenant(monkeypatch, tenant_row):
     tenant_row["row"] = _row()
     got = await resolve_provider("tenant-a")
     assert got.origin == "tenant"
-    assert got.model == "anthropic/m1"
-    assert got.provider == "anthropic"
+    assert got.model == "provider-a/m1"
+    assert got.provider == "provider-a"
     assert got.api_key == KEY
     assert got.api_base == ""
     assert got.notice is None
@@ -116,7 +116,7 @@ async def test_tenant_api_base_passes_through_when_allowlisted(monkeypatch, tena
 async def test_narrowed_allowlist_blocks_and_never_uses_platform(monkeypatch, tenant_row):
     _configure_platform(monkeypatch)
     monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
-    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "deepseek")
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "provider-c")
     tenant_row["row"] = _row()
     got = await resolve_provider("tenant-a")
     assert got.origin == "none"

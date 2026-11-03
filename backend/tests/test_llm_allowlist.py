@@ -9,15 +9,15 @@ def test_empty_allows_nothing():
     for raw in ("", "   ", ",,"):
         al = parse(raw)
         assert al.entries() == []
-        assert not al.allows("anthropic", None)
+        assert not al.allows("provider-a", None)
         assert not al.allows("openai", "https://llm.example.test")
 
 
 def test_provider_only_allows_default_endpoint_only():
-    al = parse("anthropic")
-    assert al.allows("anthropic", None)
-    assert al.allows("anthropic", "")
-    assert not al.allows("anthropic", "https://x.example.test")
+    al = parse("provider-a")
+    assert al.allows("provider-a", None)
+    assert al.allows("provider-a", "")
+    assert not al.allows("provider-a", "https://x.example.test")
     assert not al.allows("openai", None)
 
 
@@ -36,7 +36,7 @@ def test_https_origin_matching():
     assert not al.allows("openai", "https://llm.example.test:8443/v1")
     assert not al.allows("openai", "https://evil.llm.example.test/v1")
     assert not al.allows("openai", "https://llm.example.test.evil.test/v1")
-    assert not al.allows("deepseek", "https://llm.example.test/v1")
+    assert not al.allows("provider-c", "https://llm.example.test/v1")
 
 
 def test_explicit_default_port_in_entry():
@@ -68,9 +68,9 @@ def test_http_default_port():
     ],
 )
 def test_internal_targets_refused(base):
-    al = parse("anthropic,openai@https://llm.example.test")
+    al = parse("provider-a,openai@https://llm.example.test")
     assert not al.allows("openai", base)
-    assert not al.allows("anthropic", base)
+    assert not al.allows("provider-a", base)
 
 
 @pytest.mark.parametrize(
@@ -111,24 +111,24 @@ def test_userinfo_and_tricks_refused(base):
 
 
 def test_non_string_base_refused():
-    al = parse("anthropic")
-    assert not al.allows("anthropic", 5)  # type: ignore[arg-type]
+    al = parse("provider-a")
+    assert not al.allows("provider-a", 5)  # type: ignore[arg-type]
 
 
 def test_provider_case_and_whitespace():
-    al = parse("  OpenAI @ https://llm.example.test , Anthropic ")
+    al = parse("  OpenAI @ https://llm.example.test , Provider-A ")
     assert al.allows(" openai ", "https://llm.example.test/v1")
-    assert al.allows("ANTHROPIC", None)
+    assert al.allows("PROVIDER-A", None)
 
 
 def test_multiple_origins_same_provider_and_order():
-    al = parse("openai@https://a.example.test,openai@http://b.example.test:81,anthropic")
+    al = parse("openai@https://a.example.test,openai@http://b.example.test:81,provider-a")
     assert al.allows("openai", "https://a.example.test/v1")
     assert al.allows("openai", "http://b.example.test:81/v1")
     assert al.entries() == [
         {"provider": "openai", "origin": "https://a.example.test:443"},
         {"provider": "openai", "origin": "http://b.example.test:81"},
-        {"provider": "anthropic", "origin": None},
+        {"provider": "provider-a", "origin": None},
     ]
 
 
@@ -156,8 +156,8 @@ def test_malformed_entries_skipped_with_warning_never_widen(raw, caplog):
 
 
 def test_malformed_does_not_break_valid_neighbours():
-    al = parse("bad@@x,anthropic")
-    assert al.allows("anthropic", None)
+    al = parse("bad@@x,provider-a")
+    assert al.allows("provider-a", None)
     assert len(al.entries()) == 1
 
 
