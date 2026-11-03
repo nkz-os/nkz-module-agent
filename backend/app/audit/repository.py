@@ -106,14 +106,15 @@ async def record_turn(
                     INSERT INTO agent_turn_audit
                            (trace_id, tenant_id, user_id, channel, channel_user_id,
                             inbound_text, model, tool_calls, reply_text,
-                            tokens_prompt, tokens_completion, latency_ms, outcome)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
+                            tokens_prompt, tokens_completion, latency_ms, outcome,
+                            llm_origin)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14)
                     """,
                     trace_id, ctx.tenant_id, ctx.user_id, ctx.channel,
                     ctx.channel_user_id, inbound_text, result.model,
                     json.dumps(list(result.tool_calls)), result.text,
                     result.tokens_prompt, result.tokens_completion, latency_ms,
-                    result.outcome,
+                    result.outcome, result.llm_origin,
                 )
     except Exception:
         logger.exception(

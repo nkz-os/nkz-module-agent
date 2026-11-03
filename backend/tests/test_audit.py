@@ -17,9 +17,10 @@ def _ctx() -> SessionContext:
     )
 
 
-def _result(outcome="ok", tool_calls=()) -> TurnResult:
+def _result(outcome="ok", tool_calls=(), llm_origin=None) -> TurnResult:
     return TurnResult(text="hola", outcome=outcome, model="m",
-                      tool_calls=tool_calls, tokens_prompt=10, tokens_completion=5)
+                      tool_calls=tool_calls, tokens_prompt=10, tokens_completion=5,
+                      llm_origin=llm_origin)
 
 
 async def test_a_successful_turn_is_recorded(db_pool):
@@ -99,3 +100,14 @@ async def test_refused_tool_calls_survive_the_jsonb_round_trip(db_pool):
     # asyncpg hands jsonb back as text unless a codec is registered on the
     # connection, so the round trip ends with a json.loads here.
     assert json.loads(row["tool_calls"]) == [call]
+
+
+@pytest.mark.parametrize("origin", ["tenant", "platform", "none", None])
+async def test_llm_origin_is_recorded(db_pool, origin):
+    tid = f"t-origin-{origin}"
+    await record_turn(_ctx(), "hola", _result(llm_origin=origin), 10, tid)
+    async with db_pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT llm_origin FROM agent_turn_audit WHERE trace_id=$1", tid
+        )
+    assert row["llm_origin"] == origin

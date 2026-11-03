@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -55,6 +56,10 @@ def _print_table(summary: harness.Summary) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    # Evals run against the platform provider (LLM_*), which the resolver only
+    # uses when the fallback is on; the eval CLI is the dev tool that wants it.
+    os.environ.setdefault("LLM_PLATFORM_FALLBACK", "true")
+    get_settings.cache_clear()
     settings = get_settings()
     if not settings.llm_model:
         print(

@@ -107,6 +107,42 @@ async def test_unconfigured_model_yields_a_usable_message(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "notice,expected",
+    [
+        (None, "UNCONFIGURED_TEXT"),
+        ("blocked", "BLOCKED_TEXT"),
+        ("key_unreadable", "KEY_UNREADABLE_TEXT"),
+    ],
+)
+async def test_unconfigured_notice_selects_text_and_origin_none(
+    monkeypatch, notice, expected
+):
+    from app.agent import loop
+
+    async def boom(*a, **k):
+        raise LLMUnconfigured("not set", notice=notice)
+
+    monkeypatch.setattr("app.agent.loop.complete", boom)
+    r = await run_turn("hola", _budget(), _ctx())
+    assert r.outcome == "unconfigured"
+    assert r.llm_origin == "none"
+    assert r.text == getattr(loop, expected)
+    assert loop.BLOCKED_TEXT != loop.UNCONFIGURED_TEXT != loop.KEY_UNREADABLE_TEXT
+
+
+@pytest.mark.asyncio
+async def test_reply_origin_reaches_the_turn_result(monkeypatch):
+    async def fake(messages, tools=None, tenant_id=None):
+        return LLMReply(text="hola", tool_calls=(), tokens_prompt=1,
+                        tokens_completion=1, model="m", origin="tenant")
+
+    monkeypatch.setattr("app.agent.loop.complete", fake)
+    r = await run_turn("hola", _budget(), _ctx())
+    assert r.llm_origin == "tenant"
+
+
+@pytest.mark.asyncio
 async def test_plain_answer_is_returned(monkeypatch):
     async def ok(*a, **k):
         return LLMReply(text="hola", tool_calls=(), tokens_prompt=5,

@@ -45,6 +45,14 @@ UNCONFIGURED_TEXT = (
     "This assistant has no language model configured in this deployment. "
     "An administrator needs to set one before it can answer."
 )
+BLOCKED_TEXT = (
+    "The AI provider configured for your organisation is no longer allowed "
+    "in this deployment. Ask your administrator."
+)
+KEY_UNREADABLE_TEXT = (
+    "The API key stored for your organisation's AI provider cannot be read. "
+    "Ask your administrator to re-enter the key."
+)
 BUDGET_EXHAUSTED_TEXT = (
     "That took longer, or asked for more, than I am allowed to spend on one "
     "question. Try asking something narrower."
@@ -56,6 +64,11 @@ ERROR_TEXT = (
 # tool calls (some providers emit an empty content part). The turn is still
 # answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
+
+_UNCONFIGURED_TEXTS = {
+    "blocked": BLOCKED_TEXT,
+    "key_unreadable": KEY_UNREADABLE_TEXT,
+}
 
 # Memory is bounded by the turn's own token budget so it can shrink the
 # prompt but never grow it. ~4 chars per token is a conservative ceiling for
@@ -177,6 +190,7 @@ class TurnResult:
     tool_calls: tuple[dict, ...]
     tokens_prompt: int
     tokens_completion: int
+    llm_origin: str | None = None
 
 
 async def run_turn(
@@ -190,6 +204,7 @@ async def run_turn(
     """
     budget.start()
     model: str | None = None
+    llm_origin: str | None = None
     prompt_tokens = 0
     completion_tokens = 0
     seen_calls: list[dict] = []
@@ -224,6 +239,7 @@ async def run_turn(
 
             reply = await complete(messages, tools=tools, tenant_id=ctx.tenant_id)
             model = reply.model
+            llm_origin = reply.origin
             prompt_tokens += reply.tokens_prompt
             completion_tokens += reply.tokens_completion
             budget.spend_tokens(reply.tokens_prompt, reply.tokens_completion)
@@ -245,6 +261,7 @@ async def run_turn(
                     tool_calls=tuple(seen_calls),
                     tokens_prompt=prompt_tokens,
                     tokens_completion=completion_tokens,
+                    llm_origin=llm_origin,
                 )
 
             # The model asked for tools: record its assistant message (with
@@ -272,15 +289,18 @@ async def run_turn(
                     )
                 )
 
-    except LLMUnconfigured:
-        logger.critical("llm_unconfigured -- no model set for this deployment")
+    except LLMUnconfigured as exc:
+        logger.critical(
+            "llm_unconfigured tenant_id=%s notice=%s", ctx.tenant_id, exc.notice
+        )
         return TurnResult(
-            text=UNCONFIGURED_TEXT,
+            text=_UNCONFIGURED_TEXTS.get(exc.notice, UNCONFIGURED_TEXT),
             outcome="unconfigured",
             model=None,
             tool_calls=(),
             tokens_prompt=0,
             tokens_completion=0,
+            llm_origin="none",
         )
     except BudgetExhausted as exc:
         logger.warning("turn_budget_exhausted reason=%s", exc.reason)
@@ -291,6 +311,7 @@ async def run_turn(
             tool_calls=tuple(seen_calls),
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
+            llm_origin=llm_origin,
         )
     except Exception:
         # Anything else: a provider failure (LLMProviderError, already
@@ -306,6 +327,7 @@ async def run_turn(
             tool_calls=tuple(seen_calls),
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
+            llm_origin=llm_origin,
         )
 
 
