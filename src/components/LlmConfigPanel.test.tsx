@@ -176,6 +176,83 @@ describe('LlmConfigPanel', () => {
   });
 });
 
+describe('LlmConfigPanel fixes', () => {
+  const originCfg = {
+    ...base,
+    configured: true,
+    provider: 'provider-b',
+    model: 'model-x',
+    api_base: ORIGIN,
+    key_last4: '1234',
+  };
+  const putBody = () =>
+    JSON.parse(calls.find((c) => c.init?.method === 'PUT')!.init!.body as string);
+
+  it.each(['blocked', 'key_unreadable'])('translates notice %s', async (code) => {
+    routes['GET /llm-config'] = () => json(200, { ...configured, notice: code });
+    routes['GET /usage'] = () => json(200, usage);
+    const { container } = render(<LlmConfigPanel />);
+    expect(
+      await screen.findByText((en.llm.notices as Record<string, string>)[code]),
+    ).toBeTruthy();
+    expect(container.textContent).not.toContain(code);
+  });
+
+  it('shows a generic text for an unknown notice', async () => {
+    routes['GET /llm-config'] = () => json(200, { ...configured, notice: 'weird_code' });
+    routes['GET /usage'] = () => json(200, usage);
+    const { container } = render(<LlmConfigPanel />);
+    expect(await screen.findByText(en.llm.noticeGeneric)).toBeTruthy();
+    expect(container.textContent).not.toContain('weird_code');
+  });
+
+  it.each([
+    ['not_configured', en.llm.testErrors.not_configured],
+    ['provider_error', en.llm.testErrors.provider_error],
+    ['upstream said: secret-ish detail', en.llm.testErrors.generic],
+  ])('test failure %s renders translated text only', async (raw, text) => {
+    routes['GET /llm-config'] = () => json(200, configured);
+    routes['GET /usage'] = () => json(200, usage);
+    routes['POST /llm-config/test'] = () => json(200, { ok: false, error: raw });
+    const { container } = render(<LlmConfigPanel />);
+    fireEvent.click(await screen.findByText(en.llm.test));
+    expect(await screen.findByText(new RegExp(text))).toBeTruthy();
+    expect(container.textContent).not.toContain(raw);
+  });
+
+  it('omits api_key when the key is empty and only model or budget change', async () => {
+    routes['GET /llm-config'] = () => json(200, configured);
+    routes['GET /usage'] = () => json(200, usage);
+    routes['PUT /llm-config'] = () => json(200, configured);
+    render(<LlmConfigPanel />);
+    await screen.findByText(en.llm.save);
+    fireEvent.change(screen.getByLabelText(en.llm.model), { target: { value: 'model-y' } });
+    fireEvent.change(screen.getByLabelText(new RegExp('^Maximum tokens')), { target: { value: '100' } });
+    fireEvent.click(screen.getByText(en.llm.save));
+    await screen.findByText(en.llm.saved);
+    const body = putBody();
+    expect('api_key' in body).toBe(false);
+    expect(body.model).toBe('model-y');
+    expect(body.max_tokens_per_turn).toBe(100);
+  });
+
+  it.each([`${ORIGIN}/v1`, `  ${ORIGIN}  `, `${ORIGIN}:443/`, 'HTTPS://LLM.example.test'])(
+    'a path or whitespace edit (%s) does not demand a new key',
+    async (edited) => {
+      routes['GET /llm-config'] = () => json(200, originCfg);
+      routes['GET /usage'] = () => json(200, usage);
+      routes['PUT /llm-config'] = () => json(200, originCfg);
+      render(<LlmConfigPanel />);
+      await screen.findByText(en.llm.keyKeep);
+      fireEvent.change(screen.getByLabelText(new RegExp(en.llm.apiBase)), { target: { value: edited } });
+      expect(screen.getByText(en.llm.keyKeep)).toBeTruthy();
+      fireEvent.click(screen.getByText(en.llm.save));
+      await screen.findByText(en.llm.saved);
+      expect('api_key' in putBody()).toBe(false);
+    },
+  );
+});
+
 describe('locales', () => {
   const flat = (o: unknown, p = ''): string[] =>
     Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>

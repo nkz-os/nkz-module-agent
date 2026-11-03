@@ -44,7 +44,17 @@
       "invalid_model": "El nombre del modelo no es válido.",
       "invalid_key": "La clave no es válida.",
       "invalid_body": "Algún campo no es válido."
-    }
+    },
+    "notices": {
+      "blocked": "Este proveedor ya no está habilitado en la plataforma. Elige otro.",
+      "key_unreadable": "La clave guardada ya no se puede leer. Introdúcela de nuevo."
+    },
+    "testErrors": {
+      "not_configured": "No hay proveedor configurado.",
+      "provider_error": "El proveedor devolvió un error.",
+      "generic": "La prueba ha fallado."
+    },
+    "noticeGeneric": "El asistente no está disponible con la configuración actual."
   },
   "usage": {
     "title": "Consumo de este mes",

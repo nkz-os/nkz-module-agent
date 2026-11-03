@@ -44,7 +44,17 @@
       "invalid_model": "The model name is not valid.",
       "invalid_key": "The key is not valid.",
       "invalid_body": "Some fields are not valid."
-    }
+    },
+    "notices": {
+      "blocked": "This provider is no longer enabled on this platform. Choose another one.",
+      "key_unreadable": "The saved key can no longer be read. Enter the key again."
+    },
+    "testErrors": {
+      "not_configured": "No provider is set up.",
+      "provider_error": "The provider returned an error.",
+      "generic": "The test failed."
+    },
+    "noticeGeneric": "The assistant is not available with the current settings."
   },
   "usage": {
     "title": "Usage this month",

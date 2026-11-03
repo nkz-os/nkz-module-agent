@@ -31,6 +31,22 @@ const KNOWN_ERRORS = [
   'invalid_body',
 ];
 
+/** Same identity the backend compares: scheme://host:port, default port explicit. */
+function originOf(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  try {
+    const u = new URL(value.trim());
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return `invalid:${value}`;
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+    return `${u.protocol}//${u.hostname.toLowerCase()}:${port}`;
+  } catch {
+    return `invalid:${value}`;
+  }
+}
+
+const NOTICES = ['blocked', 'key_unreadable'];
+const TEST_ERRORS = ['not_configured', 'provider_error'];
+
 const entryKey = (e: AllowedEntry) => `${e.provider}@${e.origin ?? ''}`;
 
 const inputClass =
@@ -87,7 +103,7 @@ export function LlmConfigPanel() {
   const origin = entry?.origin ?? null;
   const providerChanged =
     cfg.configured &&
-    (entry?.provider !== cfg.provider || (origin !== null ? apiBase : null) !== (cfg.api_base ?? null));
+    (entry?.provider !== cfg.provider || originOf(origin !== null ? apiBase : null) !== originOf(cfg.api_base));
   const keyRequired = !cfg.configured || providerChanged;
 
   const errorText = (code: string) =>
@@ -109,7 +125,7 @@ export function LlmConfigPanel() {
     setSaved(false);
     setTestResult(null);
     if (!entry) return;
-    if (origin !== null && !apiBase.startsWith(origin)) {
+    if (origin !== null && originOf(apiBase) !== originOf(origin)) {
       return setErrorCode('endpoint_not_allowed');
     }
     if (keyRequired && !apiKey.trim()) return setErrorCode('key_required');
@@ -169,9 +185,13 @@ export function LlmConfigPanel() {
       ) : (
         <>
           {!cfg.configured && <p className="text-nkz-text-muted">{t('llm.notConfigured')}</p>}
-          {cfg.notice && <p className="text-nkz-danger">{cfg.notice}</p>}
+          {cfg.notice && (
+            <p className="text-nkz-danger">
+              {NOTICES.includes(cfg.notice) ? t(`llm.notices.${cfg.notice}`) : t('llm.noticeGeneric')}
+            </p>
+          )}
 
-          <form className="flex flex-col gap-3" onSubmit={save}>
+          <form className="flex flex-col gap-4" onSubmit={save}>
             <label className="flex flex-col gap-1">
               <span className="text-nkz-text-muted text-xs">{t('llm.provider')}</span>
               <select
@@ -283,8 +303,12 @@ export function LlmConfigPanel() {
           {testResult?.ok && <p className="text-nkz-text-secondary">{t('llm.testOk')}</p>}
           {testResult && !testResult.ok && (
             <p className="text-nkz-danger">
-              {t('llm.testFailed')}
-              {testResult.error ? ` ${testResult.error}` : ''}
+              {t('llm.testFailed')}{' '}
+              {t(
+                testResult.error && TEST_ERRORS.includes(testResult.error)
+                  ? `llm.testErrors.${testResult.error}`
+                  : 'llm.testErrors.generic',
+              )}
             </p>
           )}
           {errorCode && <p className="text-nkz-danger">{errorText(errorCode)}</p>}

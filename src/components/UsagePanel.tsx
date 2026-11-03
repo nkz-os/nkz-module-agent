@@ -25,35 +25,31 @@ export function UsagePanel() {
         <p className="text-nkz-text-muted">{t('usage.empty')}</p>
       )}
       {usage && usage.days.length > 0 && (
-        <table className="text-nkz-sm text-nkz-text-primary">
-          <thead>
-            <tr className="text-nkz-text-muted text-left">
-              <th className="pr-4">{t('usage.date')}</th>
-              <th className="pr-4">{t('usage.turns')}</th>
-              <th className="pr-4">{t('usage.tokensIn')}</th>
-              <th className="pr-4">{t('usage.tokensOut')}</th>
-              <th>{t('usage.cost')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {usage.days.map((d) => (
-              <tr key={d.date}>
-                <td className="pr-4">{d.date}</td>
-                <td className="pr-4">{d.turns}</td>
-                <td className="pr-4">{d.tokens_prompt}</td>
-                <td className="pr-4">{d.tokens_completion}</td>
-                <td>{cost(d.cost_estimate_usd)}</td>
-              </tr>
-            ))}
-            <tr className="font-medium">
-              <td className="pr-4">{t('usage.total')}</td>
-              <td className="pr-4">{usage.totals.turns}</td>
-              <td className="pr-4">{usage.totals.tokens_prompt}</td>
-              <td className="pr-4">{usage.totals.tokens_completion}</td>
-              <td>{cost(usage.totals.cost_estimate_usd)}</td>
-            </tr>
-          </tbody>
-        </table>
+        <ul className="flex flex-col gap-2 text-nkz-sm text-nkz-text-primary">
+            <li className="flex items-center justify-between gap-4 text-nkz-text-muted">
+              <span>{t('usage.date')}</span>
+              <span>{t('usage.turns')}</span>
+              <span>{t('usage.tokensIn')}</span>
+              <span>{t('usage.tokensOut')}</span>
+              <span>{t('usage.cost')}</span>
+            </li>
+          {usage.days.map((d) => (
+            <li key={d.date} className="flex items-center justify-between gap-4">
+              <span>{d.date}</span>
+              <span>{d.turns}</span>
+              <span>{d.tokens_prompt}</span>
+              <span>{d.tokens_completion}</span>
+              <span>{cost(d.cost_estimate_usd)}</span>
+            </li>
+          ))}
+            <li className="flex items-center justify-between gap-4 font-medium">
+              <span>{t('usage.total')}</span>
+              <span>{usage.totals.turns}</span>
+              <span>{usage.totals.tokens_prompt}</span>
+              <span>{usage.totals.tokens_completion}</span>
+              <span>{cost(usage.totals.cost_estimate_usd)}</span>
+            </li>
+        </ul>
       )}
     </div>
   );
