@@ -322,3 +322,41 @@ async def test_scrub_keeps_malformed_element_as_null_name(db_pool):
     assert await scrub_expired_texts("tenant_a") == 1
     assert _calls(await _row(db_pool, "a-old")) == [{"name": None}, {"name": "b"}]
     assert await scrub_expired_texts("tenant_a") == 0
+
+
+async def _old_row(db_pool, trace_id, tenant="tenant_a"):
+    await record_turn(_ctx(tenant), f"in {trace_id}", _result(), 1, trace_id)
+    async with db_pool.acquire() as c:
+        await c.execute(
+            "UPDATE agent_turn_audit SET created_at = now() - interval '91 days' "
+            "WHERE trace_id = $1", trace_id)
+    repository._last_scrub.clear()
+
+
+@pytest.mark.parametrize("shape", [None, {}, "x"])
+async def test_scrub_is_total_for_non_array_tool_calls(db_pool, shape):
+    await _seed(db_pool)  # a-old is a valid-shape old row of the same tenant
+    await _set_tool_calls(db_pool, "a-old", [_openai_call("c1", "a")])
+    await _old_row(db_pool, "bad-texts")
+    await _old_row(db_pool, "bad-null")
+    await _set_tool_calls(db_pool, "bad-texts", shape)
+    await _set_tool_calls(db_pool, "bad-null", shape, null_texts=True)
+
+    assert await scrub_expired_texts("tenant_a") == 3
+
+    for tid in ("bad-texts", "bad-null"):
+        row = await _row(db_pool, tid)
+        assert row["inbound_text"] is None and row["reply_text"] is None
+        assert _calls(row) == []
+    good = await _row(db_pool, "a-old")
+    assert good["inbound_text"] is None and _calls(good) == [{"name": "a"}]
+    assert await scrub_expired_texts("tenant_a") == 0
+
+
+async def test_scrub_rewrites_element_without_function_when_texts_null(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old", [{"id": "1", "type": "function"}],
+                          null_texts=True)
+    assert await scrub_expired_texts("tenant_a") == 1
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": None}]
+    assert await scrub_expired_texts("tenant_a") == 0

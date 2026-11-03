@@ -72,22 +72,25 @@ async def scrub_expired_texts(tenant_id: str) -> int:
             """
             UPDATE agent_turn_audit
                SET inbound_text = NULL, reply_text = NULL,
-                   tool_calls = (
-                       SELECT coalesce(
-                           jsonb_agg(jsonb_build_object(
-                               'name',
-                               coalesce(e->'function'->>'name', e->>'name'))
-                               ORDER BY ord),
-                           '[]'::jsonb)
-                         FROM jsonb_array_elements(tool_calls)
-                              WITH ORDINALITY AS t(e, ord))
+                   tool_calls = CASE
+                       WHEN jsonb_typeof(tool_calls) = 'array' THEN (
+                           SELECT coalesce(
+                               jsonb_agg(jsonb_build_object(
+                                   'name',
+                                   coalesce(e->'function'->>'name', e->>'name'))
+                                   ORDER BY ord),
+                               '[]'::jsonb)
+                             FROM jsonb_array_elements(tool_calls)
+                                  WITH ORDINALITY AS t(e, ord))
+                       ELSE '[]'::jsonb END
              WHERE tenant_id = $1
                AND created_at < now() - ($2 || ' days')::interval
                AND (inbound_text IS NOT NULL OR reply_text IS NOT NULL
-                    OR (jsonb_typeof(tool_calls) = 'array'
-                        AND EXISTS (SELECT 1 FROM jsonb_array_elements(tool_calls) x
-                                     WHERE jsonb_typeof(x) = 'object'
-                                       AND x ? 'function')))
+                    OR CASE WHEN jsonb_typeof(tool_calls) = 'array' THEN
+                           EXISTS (SELECT 1 FROM jsonb_array_elements(tool_calls) x
+                                    WHERE jsonb_typeof(x) = 'object'
+                                      AND (x - 'name') <> '{}'::jsonb)
+                       ELSE true END)
             """,
             tenant_id, str(settings.audit_text_retention_days),
         )
