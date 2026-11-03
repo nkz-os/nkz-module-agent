@@ -19,7 +19,7 @@ vi.mock('react-i18next', () => ({
 
 import { LlmConfigPanel } from './LlmConfigPanel';
 
-const ORIGIN = 'https://llm.example.test';
+const ORIGIN = 'https://llm.example.test:443';
 const KEY = 'sk-synthetic-secret-1234';
 
 const base = {
@@ -165,6 +165,36 @@ describe('LlmConfigPanel', () => {
     ).toBeTruthy();
   });
 
+  it('preselects the entry whose origin matches the stored api_base (path, no port)', async () => {
+    routes['GET /llm-config'] = () =>
+      json(200, {
+        ...configured,
+        provider: 'provider-b',
+        api_base: 'https://llm.example.test/v4',
+      });
+    routes['GET /usage'] = () => json(200, usage);
+    render(<LlmConfigPanel />);
+    await screen.findByText(en.llm.save);
+    const select = screen.getByLabelText(en.llm.provider) as HTMLSelectElement;
+    expect(select.value).toBe(`provider-b@${ORIGIN}`);
+    expect(screen.queryByText(en.llm.noMatch)).toBeNull();
+    // origin entries show their origin in the label
+    expect(screen.getByText(`provider-b — ${ORIGIN}`)).toBeTruthy();
+  });
+
+  it('selects nothing when the stored config matches no allowed entry, and blocks save', async () => {
+    routes['GET /llm-config'] = () =>
+      json(200, { ...configured, provider: 'provider-b', api_base: 'https://other.example.test/v1' });
+    routes['GET /usage'] = () => json(200, usage);
+    render(<LlmConfigPanel />);
+    await screen.findByText(en.llm.save);
+    expect((screen.getByLabelText(en.llm.provider) as HTMLSelectElement).value).toBe('');
+    expect(screen.getByText(en.llm.noMatch)).toBeTruthy();
+    fireEvent.click(screen.getByText(en.llm.save));
+    expect(await screen.findByText(en.llm.errors.choose_provider)).toBeTruthy();
+    expect(calls.some((c) => c.init?.method === 'PUT')).toBe(false);
+  });
+
   it('shows "—" for null cost and labels cost as estimate (USD)', async () => {
     routes['GET /llm-config'] = () => json(200, base);
     routes['GET /usage'] = () => json(200, usage);
@@ -236,7 +266,7 @@ describe('LlmConfigPanel fixes', () => {
     expect(body.max_tokens_per_turn).toBe(100);
   });
 
-  it.each([`${ORIGIN}/v1`, `  ${ORIGIN}  `, `${ORIGIN}:443/`, 'HTTPS://LLM.example.test'])(
+  it.each([`${ORIGIN}/v1`, `  ${ORIGIN}  `, `${ORIGIN}/`, 'HTTPS://LLM.example.test'])(
     'a path or whitespace edit (%s) does not demand a new key',
     async (edited) => {
       routes['GET /llm-config'] = () => json(200, originCfg);

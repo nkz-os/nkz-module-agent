@@ -36,7 +36,10 @@
     "saved": "Saved.",
     "testOk": "The provider answered correctly.",
     "testFailed": "The provider did not answer.",
+    "noMatch": "The stored provider is not in the allowed list. Choose a provider and enter its key again.",
+    "choose": "Choose a provider",
     "errors": {
+      "choose_provider": "Choose a provider from the list.",
       "byok_unavailable": "Saving a provider is not available on this platform right now.",
       "endpoint_not_allowed": "This provider or address is not enabled on this platform.",
       "key_required": "A key is required when you add a provider or change its provider or address.",

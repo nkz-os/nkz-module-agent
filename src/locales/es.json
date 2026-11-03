@@ -36,7 +36,10 @@
     "saved": "Guardado.",
     "testOk": "El proveedor ha respondido correctamente.",
     "testFailed": "El proveedor no ha respondido.",
+    "noMatch": "El proveedor guardado no está en la lista permitida. Elige un proveedor e introduce de nuevo su clave.",
+    "choose": "Elige un proveedor",
     "errors": {
+      "choose_provider": "Elige un proveedor de la lista.",
       "byok_unavailable": "Ahora mismo no se puede guardar un proveedor en esta plataforma.",
       "endpoint_not_allowed": "Este proveedor o esta dirección no están habilitados en la plataforma.",
       "key_required": "Hace falta la clave al añadir un proveedor o al cambiar su proveedor o dirección.",

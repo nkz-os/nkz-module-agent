@@ -22,6 +22,7 @@ import {
 import { UsagePanel } from './UsagePanel';
 
 const KNOWN_ERRORS = [
+  'choose_provider',
   'byok_unavailable',
   'endpoint_not_allowed',
   'key_required',
@@ -53,12 +54,17 @@ const inputClass =
   'bg-nkz-surface-sunken text-nkz-text-primary rounded px-2 py-1 text-nkz-sm';
 
 function initialEntry(cfg: LlmConfig): AllowedEntry | null {
-  const match = cfg.allowed.find(
-    (e) =>
-      e.provider === cfg.provider &&
-      (e.origin === null ? !cfg.api_base : !!cfg.api_base?.startsWith(e.origin)),
+  if (!cfg.configured) return cfg.allowed[0] ?? null;
+  // Origin equality, like the backend: the stored api_base may carry a path
+  // or omit the default port. No match -> nothing selected (never guess a
+  // provider: the key would be saved under it).
+  return (
+    cfg.allowed.find(
+      (e) =>
+        e.provider === cfg.provider &&
+        (e.origin === null ? !cfg.api_base : originOf(cfg.api_base) === e.origin),
+    ) ?? null
   );
-  return match ?? cfg.allowed[0] ?? null;
 }
 
 export function LlmConfigPanel() {
@@ -124,7 +130,7 @@ export function LlmConfigPanel() {
     setErrorCode(null);
     setSaved(false);
     setTestResult(null);
-    if (!entry) return;
+    if (!entry) return setErrorCode('choose_provider');
     if (origin !== null && originOf(apiBase) !== originOf(origin)) {
       return setErrorCode('endpoint_not_allowed');
     }
@@ -185,6 +191,7 @@ export function LlmConfigPanel() {
       ) : (
         <>
           {!cfg.configured && <p className="text-nkz-text-muted">{t('llm.notConfigured')}</p>}
+          {cfg.configured && !entry && <p className="text-nkz-danger">{t('llm.noMatch')}</p>}
           {cfg.notice && (
             <p className="text-nkz-danger">
               {NOTICES.includes(cfg.notice) ? t(`llm.notices.${cfg.notice}`) : t('llm.noticeGeneric')}
@@ -199,9 +206,10 @@ export function LlmConfigPanel() {
                 value={entryId}
                 onChange={(ev) => onProviderChange(ev.target.value)}
               >
+                {!entry && <option value="">{t('llm.choose')}</option>}
                 {cfg.allowed.map((a) => (
                   <option key={entryKey(a)} value={entryKey(a)}>
-                    {a.provider}
+                    {a.origin ? `${a.provider} — ${a.origin}` : a.provider}
                   </option>
                 ))}
               </select>
