@@ -320,3 +320,67 @@ async def test_audit_failure_keeps_reply_and_hides_message_text(
 
     assert reply.text == "ok"
     assert canary not in caplog.text
+
+
+# --- Per-tenant turn budget (spec 5.5) -----------------------------------------
+
+
+async def _budget_for_tenant(monkeypatch, get_impl):
+    seen = {}
+
+    async def capture_budget(text, budget, ctx):
+        seen["budget"] = budget
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "4000")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.handlers.run_turn", capture_budget)
+    monkeypatch.setattr("app.handlers.configs.get", get_impl)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-a")
+    return seen["budget"]
+
+
+def _cfg(value):
+    from types import SimpleNamespace
+
+    async def _get(tenant_id):
+        return SimpleNamespace(max_tokens_per_turn=value)
+
+    return _get
+
+
+async def test_tenant_budget_below_ceiling_is_applied(db_pool, monkeypatch, clear_settings_cache):
+    budget = await _budget_for_tenant(monkeypatch, _cfg(1500))
+    assert budget._max_tokens == 1500
+
+
+async def test_tenant_budget_above_ceiling_is_clamped(db_pool, monkeypatch, clear_settings_cache):
+    budget = await _budget_for_tenant(monkeypatch, _cfg(9000))
+    assert budget._max_tokens == 4000
+
+
+async def test_no_config_row_uses_the_ceiling(db_pool, monkeypatch, clear_settings_cache):
+    async def none_get(tenant_id):
+        return None
+
+    budget = await _budget_for_tenant(monkeypatch, none_get)
+    assert budget._max_tokens == 4000
+
+
+async def test_row_without_budget_uses_the_ceiling(db_pool, monkeypatch, clear_settings_cache):
+    budget = await _budget_for_tenant(monkeypatch, _cfg(None))
+    assert budget._max_tokens == 4000
+
+
+async def test_config_lookup_error_falls_back_to_ceiling(
+    db_pool, monkeypatch, clear_settings_cache, caplog
+):
+    async def boom(tenant_id):
+        raise RuntimeError("db down")
+
+    with caplog.at_level(logging.WARNING):
+        budget = await _budget_for_tenant(monkeypatch, boom)
+    assert budget._max_tokens == 4000
+    assert any(r.levelno == logging.WARNING and "budget" in r.getMessage() for r in caplog.records)

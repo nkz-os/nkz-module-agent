@@ -28,6 +28,7 @@ from app.config import get_settings
 from app.domain.messages import InboundMessage, OutboundMessage
 from app.identity import repository as repo
 from app.identity import service
+from app.llm import configs
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,23 @@ async def handle_message(msg: InboundMessage, trace_id: str) -> OutboundMessage:
         return OutboundMessage(text=QUOTA_TEXT)
 
     settings = get_settings()
+    ceiling = settings.max_tokens_per_turn_ceiling
+    max_tokens = ceiling
+    try:
+        cfg = await configs.get(session.tenant_id)
+        if cfg is not None and cfg.max_tokens_per_turn:
+            max_tokens = min(cfg.max_tokens_per_turn, ceiling)
+    except Exception:
+        # Never fail the turn over the budget lookup; the resolver surfaces
+        # the real error. No key material is involved here.
+        logger.warning(
+            "turn_budget_lookup_failed tenant_id=%s trace_id=%s: using ceiling",
+            session.tenant_id, trace_id,
+        )
     budget = TurnBudget(
         max_iterations=settings.max_iterations,
         max_tool_calls=settings.max_tool_calls,
-        max_tokens=settings.max_tokens_per_turn,
+        max_tokens=max_tokens,
         timeout_s=settings.turn_timeout_seconds,
     )
     started = time.monotonic()

@@ -24,6 +24,8 @@ Design decisions (deliberate, documented for review):
   audited but never counted: they cost nothing, and a farmer sending photos
   must not lock out their own text questions. Both counts filter
   ``outcome <> 'refused'``.
+* Rows on the ``panel`` channel (config test calls) are excluded from both
+  counts: they are not turns and must not consume a farmer's quota.
 * Precedence when both caps are hit simultaneously is deterministic: the
   account check runs first, so the reported reason is always
   ``"account_hourly"``. Guarded by test_both_caps_reached_reports_account_hourly.
@@ -41,6 +43,10 @@ from app.config import get_settings
 from app.db import get_pool
 
 logger = logging.getLogger(__name__)
+
+# Panel test calls ("Probar") are audited for their token cost but are neither
+# turns nor quota consumption, so both counts exclude this channel.
+PANEL_CHANNEL = "panel"
 
 
 async def check_and_count(
@@ -66,18 +72,18 @@ async def check_and_count(
                 SELECT count(*) FROM agent_turn_audit
                  WHERE tenant_id = $1 AND channel = $2 AND channel_user_id = $3
                    AND created_at > now() - interval '1 hour'
-                   AND outcome <> 'refused'
+                   AND outcome <> 'refused' AND channel <> $4
                 """,
-                tenant_id, channel, channel_user_id,
+                tenant_id, channel, channel_user_id, PANEL_CHANNEL,
             )
 
             per_tenant = await conn.fetchval(
                 """
                 SELECT count(*) FROM agent_turn_audit
                  WHERE tenant_id = $1 AND created_at > now() - interval '1 day'
-                   AND outcome <> 'refused'
+                   AND outcome <> 'refused' AND channel <> $2
                 """,
-                tenant_id,
+                tenant_id, PANEL_CHANNEL,
             )
 
     if per_account >= settings.max_turns_per_account_hour:

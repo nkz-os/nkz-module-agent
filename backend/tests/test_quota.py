@@ -194,3 +194,42 @@ async def test_real_turns_still_count_beside_refused_ones(db_pool, monkeypatch):
     await _seed(db_pool, 3, outcome="ok")
     assert await check_and_count("tenant_a", "telegram", "42") == "account_hourly"
     get_settings.cache_clear()
+
+
+# --- Panel channel is excluded from both counts -----------------------------------
+
+
+async def _seed_panel(db_pool, n, user="42"):
+    async with db_pool.acquire() as c:
+        for i in range(n):
+            await c.execute(
+                """INSERT INTO agent_turn_audit
+                   (trace_id, tenant_id, user_id, channel, channel_user_id, outcome)
+                   VALUES ($1,'tenant_a','u','panel',$2,'ok')""",
+                f"panel-{user}-{i}", user,
+            )
+
+
+async def test_panel_rows_do_not_count_toward_account_hourly(db_pool, monkeypatch):
+    monkeypatch.setenv("MAX_TURNS_PER_ACCOUNT_HOUR", "2")
+    get_settings.cache_clear()
+    await _seed_panel(db_pool, 5)
+    assert await check_and_count("tenant_a", "panel", "42") is None
+    get_settings.cache_clear()
+
+
+async def test_panel_rows_do_not_count_toward_tenant_daily(db_pool, monkeypatch):
+    monkeypatch.setenv("MAX_TURNS_PER_TENANT_DAY", "3")
+    get_settings.cache_clear()
+    await _seed_panel(db_pool, 5)
+    assert await check_and_count("tenant_a", "telegram", "99") is None
+    get_settings.cache_clear()
+
+
+async def test_non_panel_rows_still_count_next_to_panel_rows(db_pool, monkeypatch):
+    monkeypatch.setenv("MAX_TURNS_PER_TENANT_DAY", "3")
+    get_settings.cache_clear()
+    await _seed_panel(db_pool, 5)
+    await _seed(db_pool, 3)
+    assert await check_and_count("tenant_a", "telegram", "99") == "tenant_daily"
+    get_settings.cache_clear()
