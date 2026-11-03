@@ -4,10 +4,14 @@ Run after prepending a new key to LLM_KEY_ENCRYPTION_KEYS ("new,old"). Safe to
 re-run: rows the first key already reads are left untouched. Prints counts
 only, never key material.
 
-The table has FORCE row-level security, so enumerating tenants needs a DSN
-whose role bypasses RLS (AGENT_ROTATE_DSN, falling back to AGENT_MIGRATE_DSN);
-each row is then updated inside a transaction with app.current_tenant set to
-that row's tenant, like the service does.
+The table has FORCE row-level security, so enumerating tenants needs a role
+that is superuser or has BYPASSRLS. AGENT_ROTATE_DSN must point at such a role:
+a deliberate, operator-only escalation for the duration of this run, never
+stored in the service's configuration. The script refuses (non-zero exit) on
+any other role, because an RLS-bound role would see zero rows and report a
+clean no-op while every key still sits under the old master key. Each row is
+updated inside a transaction with app.current_tenant set to that row's tenant,
+like the service does.
 """
 
 from __future__ import annotations
@@ -33,6 +37,15 @@ async def rotate(dsn: str) -> tuple[int, int]:
         dsn, server_settings={"search_path": "agent_module,public"}
     )
     try:
+        bypass = await conn.fetchval(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles "
+            "WHERE rolname = current_user"
+        )
+        if not bypass:
+            raise SystemExit(
+                "AGENT_ROTATE_DSN role is neither superuser nor BYPASSRLS: it "
+                "would see no rows under FORCE row-level security. Refusing."
+            )
         tenants = [
             r["tenant_id"]
             for r in await conn.fetch("SELECT tenant_id FROM tenant_llm_configs")
@@ -66,8 +79,8 @@ async def rotate(dsn: str) -> tuple[int, int]:
 
 
 if __name__ == "__main__":
-    dsn = os.environ.get("AGENT_ROTATE_DSN") or os.environ.get("AGENT_MIGRATE_DSN")
+    dsn = os.environ.get("AGENT_ROTATE_DSN")
     if not dsn:
-        raise SystemExit("AGENT_ROTATE_DSN (or AGENT_MIGRATE_DSN) is not set")
+        raise SystemExit("AGENT_ROTATE_DSN is not set")
     done, bad = asyncio.run(rotate(dsn))
     print(f"[rotate] rotated={done} unreadable={bad}", flush=True)

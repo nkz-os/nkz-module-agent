@@ -5,6 +5,9 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+from urllib.parse import urlsplit, urlunsplit
+
+import asyncpg
 
 import pytest
 from cryptography.fernet import Fernet
@@ -92,3 +95,23 @@ async def test_rotation_counts_unreadable_rows_and_leaves_them(db_pool, monkeypa
         assert bytes(await conn.fetchval(
             "SELECT api_key_ciphertext FROM tenant_llm_configs"
         )) == orphan
+
+
+async def test_rotation_refuses_role_without_rls_bypass(db_pool, monkeypatch):
+    _set_keys(monkeypatch, Fernet.generate_key().decode())
+    role = "agent_rotate_probe"
+    async with db_pool.acquire() as conn:
+        await conn.execute(f"DROP ROLE IF EXISTS {role}")
+        await conn.execute(
+            f"CREATE ROLE {role} LOGIN PASSWORD 'probe' NOSUPERUSER NOBYPASSRLS"
+        )
+    try:
+        parts = urlsplit(os.environ["POSTGRES_URL"])
+        host = parts.hostname + (f":{parts.port}" if parts.port else "")
+        dsn = urlunsplit(parts._replace(netloc=f"{role}:probe@{host}"))
+        with pytest.raises(SystemExit) as exc:
+            await _load_script().rotate(dsn)
+        assert "Refusing" in str(exc.value)
+    finally:
+        async with db_pool.acquire() as conn:
+            await conn.execute(f"DROP ROLE IF EXISTS {role}")
