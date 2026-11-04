@@ -26,6 +26,10 @@ asyncpg>=0.29.0
 # the scan, not in the license.
 litellm>=1.102.1
 
+# Fernet/MultiFernet for the per-tenant LLM keys stored at rest
+# (app/llm/keys.py). Apache-2.0/BSD, AGPL-compatible.
+cryptography>=50.0.2
+
 # Testing and dev-only tooling (pytest, black, ruff) live in
 # requirements-dev.txt, not here — this file is what the Dockerfile installs
 # into the production image.

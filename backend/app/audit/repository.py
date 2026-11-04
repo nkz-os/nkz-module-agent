@@ -48,7 +48,8 @@ def _should_scrub(tenant_id: str) -> bool:
 
 
 async def scrub_expired_texts(tenant_id: str) -> int:
-    """NULL the free text of this tenant's audit rows older than the window.
+    """NULL the free text of this tenant's audit rows older than the window
+    and reduce their ``tool_calls`` to ``[{"name": ...}]`` (arguments dropped).
 
     Per tenant because the table has FORCE row-level security: the module's
     role only sees the rows of the tenant set in ``app.current_tenant``, so a
@@ -70,10 +71,26 @@ async def scrub_expired_texts(tenant_id: str) -> int:
         status = await conn.execute(
             """
             UPDATE agent_turn_audit
-               SET inbound_text = NULL, reply_text = NULL
+               SET inbound_text = NULL, reply_text = NULL,
+                   tool_calls = CASE
+                       WHEN jsonb_typeof(tool_calls) = 'array' THEN (
+                           SELECT coalesce(
+                               jsonb_agg(jsonb_build_object(
+                                   'name',
+                                   coalesce(e->'function'->>'name', e->>'name'))
+                                   ORDER BY ord),
+                               '[]'::jsonb)
+                             FROM jsonb_array_elements(tool_calls)
+                                  WITH ORDINALITY AS t(e, ord))
+                       ELSE '[]'::jsonb END
              WHERE tenant_id = $1
                AND created_at < now() - ($2 || ' days')::interval
-               AND (inbound_text IS NOT NULL OR reply_text IS NOT NULL)
+               AND (inbound_text IS NOT NULL OR reply_text IS NOT NULL
+                    OR CASE WHEN jsonb_typeof(tool_calls) = 'array' THEN
+                           EXISTS (SELECT 1 FROM jsonb_array_elements(tool_calls) x
+                                    WHERE jsonb_typeof(x) = 'object'
+                                      AND (x - 'name') <> '{}'::jsonb)
+                       ELSE true END)
             """,
             tenant_id, str(settings.audit_text_retention_days),
         )
@@ -106,14 +123,15 @@ async def record_turn(
                     INSERT INTO agent_turn_audit
                            (trace_id, tenant_id, user_id, channel, channel_user_id,
                             inbound_text, model, tool_calls, reply_text,
-                            tokens_prompt, tokens_completion, latency_ms, outcome)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
+                            tokens_prompt, tokens_completion, latency_ms, outcome,
+                            llm_origin)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14)
                     """,
                     trace_id, ctx.tenant_id, ctx.user_id, ctx.channel,
                     ctx.channel_user_id, inbound_text, result.model,
                     json.dumps(list(result.tool_calls)), result.text,
                     result.tokens_prompt, result.tokens_completion, latency_ms,
-                    result.outcome,
+                    result.outcome, result.llm_origin,
                 )
     except Exception:
         logger.exception(

@@ -30,20 +30,33 @@ from dataclasses import dataclass
 from litellm import acompletion
 
 from app.config import get_settings
-from app.llm.resolver import platform_provider, resolve_provider
+from app.llm.resolver import resolve_provider
 
 logger = logging.getLogger(__name__)
 
 
 class LLMUnconfigured(Exception):
-    """Raised by complete() when no model is configured for this deployment."""
+    """Raised by complete() when no provider resolves for the tenant.
+
+    `notice` says why a tenant's own row did not resolve ("blocked",
+    "key_unreadable"); None means there was nothing configured.
+    """
+
+    def __init__(self, message: str = "", notice: str | None = None):
+        super().__init__(message)
+        self.notice = notice
 
 
 class LLMProviderError(Exception):
     """Raised when a configured provider call fails, for any reason.
 
     The message is sanitized: the configured API key never appears in it.
+    `origin` says whose provider failed (tenant/platform) for the audit.
     """
+
+    def __init__(self, message: str = "", origin: str | None = None):
+        super().__init__(message)
+        self.origin = origin
 
 
 @dataclass(frozen=True)
@@ -53,11 +66,13 @@ class LLMReply:
     tokens_prompt: int
     tokens_completion: int
     model: str
+    origin: str | None = None
 
 
-def is_configured() -> bool:
-    """Whether the platform provider (deployment settings) has a model set."""
-    return platform_provider() is not None
+async def is_configured(tenant_id: str | None) -> bool:
+    """Whether a provider resolves for this tenant (tenant row, or platform
+    when the fallback is enabled)."""
+    return (await resolve_provider(tenant_id)).origin != "none"
 
 
 def _sanitize(message: str, secret: str) -> str:
@@ -78,6 +93,7 @@ async def complete(
     tools: list[dict] | None = None,
     *,
     tenant_id: str | None = None,
+    max_tokens: int | None = None,
 ) -> LLMReply:
     """Send one completion request to the provider resolved for the tenant.
 
@@ -85,9 +101,11 @@ async def complete(
     in that case), or LLMProviderError if the provider call fails.
     """
     settings = get_settings()
-    resolved = resolve_provider(tenant_id)
+    resolved = await resolve_provider(tenant_id)
     if resolved.origin == "none":
-        raise LLMUnconfigured("LLM_MODEL is not set for this deployment")
+        raise LLMUnconfigured(
+            "no LLM provider resolved for this tenant", notice=resolved.notice
+        )
 
     kwargs: dict = {
         "model": resolved.model,
@@ -99,8 +117,12 @@ async def complete(
         kwargs["api_base"] = resolved.api_base
     if resolved.api_key:
         kwargs["api_key"] = resolved.api_key
+    if resolved.origin == "tenant":
+        kwargs["custom_llm_provider"] = resolved.provider
     if tools:
         kwargs["tools"] = tools
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
 
     try:
         response = await acompletion(**kwargs)
@@ -115,6 +137,7 @@ async def complete(
             tokens_prompt=getattr(usage, "prompt_tokens", 0) or 0,
             tokens_completion=getattr(usage, "completion_tokens", 0) or 0,
             model=resolved.model,
+            origin=resolved.origin,
         )
     except Exception as exc:
         detail = _sanitize(str(exc), resolved.api_key)
@@ -126,4 +149,20 @@ async def complete(
         )
         # `from None`: suppress __context__ so nothing prints the original
         # (possibly unredacted) exception via traceback chaining.
-        raise LLMProviderError(detail) from None
+        raise LLMProviderError(detail, origin=resolved.origin) from None
+
+
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    """USD estimate from LiteLLM's price table; None when it cannot say
+    (unknown model, any error)."""
+    try:
+        import litellm
+
+        prompt_cost, completion_cost = litellm.cost_per_token(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return float(prompt_cost) + float(completion_cost)
+    except Exception:
+        return None

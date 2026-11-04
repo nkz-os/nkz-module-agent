@@ -8,6 +8,7 @@ import React from 'react';
 import { SlotShell } from '@nekazari/viewer-kit';
 import { useTranslation } from 'react-i18next';
 import { LinkPanel } from './components/LinkPanel';
+import { LlmConfigPanel } from './components/LlmConfigPanel';
 import './i18n';
 import './index.css';
 
@@ -18,7 +19,10 @@ export default function App() {
   const { t } = useTranslation('agent');
   return (
     <SlotShell moduleId="agent" accent={moduleAccent} title={t('title')}>
-      <LinkPanel />
+      <div className="flex flex-col gap-4">
+        <LinkPanel />
+        <LlmConfigPanel />
+      </div>
     </SlotShell>
   );
 }

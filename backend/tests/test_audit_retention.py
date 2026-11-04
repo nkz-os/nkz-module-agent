@@ -253,3 +253,110 @@ async def test_rls_alone_isolates_tenants_under_module_role(db_pool, role_pool):
     assert touched == "UPDATE 1"
     assert (await _row(db_pool, "a-old"))["reply_text"] is None
     assert (await _row(db_pool, "b-old"))["reply_text"] == "reply"
+
+
+def _openai_call(call_id: str, name: str) -> dict:
+    return {"id": call_id, "type": "function",
+            "function": {"name": name, "arguments": '{"parcel": "p1"}'}}
+
+
+async def _set_tool_calls(db_pool, trace_id, calls, *, null_texts=False):
+    import json
+    async with db_pool.acquire() as c:
+        await c.execute(
+            "UPDATE agent_turn_audit SET tool_calls = $2::jsonb WHERE trace_id = $1",
+            trace_id, json.dumps(calls))
+        if null_texts:
+            await c.execute(
+                "UPDATE agent_turn_audit SET inbound_text = NULL, reply_text = NULL "
+                "WHERE trace_id = $1", trace_id)
+
+
+def _calls(row):
+    import json
+    v = row["tool_calls"]
+    return json.loads(v) if isinstance(v, str) else v
+
+
+async def test_scrub_strips_tool_call_arguments_keeping_names_in_order(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old",
+                          [_openai_call("c1", "a"), _openai_call("c2", "b")])
+    assert await scrub_expired_texts("tenant_a") == 1
+    old = await _row(db_pool, "a-old")
+    assert _calls(old) == [{"name": "a"}, {"name": "b"}]
+    assert old["inbound_text"] is None and old["reply_text"] is None
+
+
+async def test_scrub_strips_arguments_when_texts_already_null(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old", [_openai_call("c1", "a")],
+                          null_texts=True)
+    assert await scrub_expired_texts("tenant_a") == 1
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": "a"}]
+
+
+async def test_scrub_leaves_recent_and_other_tenant_tool_calls(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-new", [_openai_call("c1", "a")])
+    await _set_tool_calls(db_pool, "b-old", [_openai_call("c2", "b")])
+    await scrub_expired_texts("tenant_a")
+    assert _calls(await _row(db_pool, "a-new")) == [_openai_call("c1", "a")]
+    assert _calls(await _row(db_pool, "b-old")) == [_openai_call("c2", "b")]
+
+
+async def test_scrub_tool_calls_is_idempotent_and_keeps_name_only_elements(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old",
+                          [_openai_call("c1", "a"), {"name": "kept"}])
+    assert await scrub_expired_texts("tenant_a") == 1
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": "a"}, {"name": "kept"}]
+    assert await scrub_expired_texts("tenant_a") == 0
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": "a"}, {"name": "kept"}]
+
+
+async def test_scrub_keeps_malformed_element_as_null_name(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old",
+                          [{"id": "c1", "type": "function"}, _openai_call("c2", "b")])
+    assert await scrub_expired_texts("tenant_a") == 1
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": None}, {"name": "b"}]
+    assert await scrub_expired_texts("tenant_a") == 0
+
+
+async def _old_row(db_pool, trace_id, tenant="tenant_a"):
+    await record_turn(_ctx(tenant), f"in {trace_id}", _result(), 1, trace_id)
+    async with db_pool.acquire() as c:
+        await c.execute(
+            "UPDATE agent_turn_audit SET created_at = now() - interval '91 days' "
+            "WHERE trace_id = $1", trace_id)
+    repository._last_scrub.clear()
+
+
+@pytest.mark.parametrize("shape", [None, {}, "x"])
+async def test_scrub_is_total_for_non_array_tool_calls(db_pool, shape):
+    await _seed(db_pool)  # a-old is a valid-shape old row of the same tenant
+    await _set_tool_calls(db_pool, "a-old", [_openai_call("c1", "a")])
+    await _old_row(db_pool, "bad-texts")
+    await _old_row(db_pool, "bad-null")
+    await _set_tool_calls(db_pool, "bad-texts", shape)
+    await _set_tool_calls(db_pool, "bad-null", shape, null_texts=True)
+
+    assert await scrub_expired_texts("tenant_a") == 3
+
+    for tid in ("bad-texts", "bad-null"):
+        row = await _row(db_pool, tid)
+        assert row["inbound_text"] is None and row["reply_text"] is None
+        assert _calls(row) == []
+    good = await _row(db_pool, "a-old")
+    assert good["inbound_text"] is None and _calls(good) == [{"name": "a"}]
+    assert await scrub_expired_texts("tenant_a") == 0
+
+
+async def test_scrub_rewrites_element_without_function_when_texts_null(db_pool):
+    await _seed(db_pool)
+    await _set_tool_calls(db_pool, "a-old", [{"id": "1", "type": "function"}],
+                          null_texts=True)
+    assert await scrub_expired_texts("tenant_a") == 1
+    assert _calls(await _row(db_pool, "a-old")) == [{"name": None}]
+    assert await scrub_expired_texts("tenant_a") == 0

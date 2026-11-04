@@ -68,3 +68,30 @@ def test_temperature_defaults_low(monkeypatch):
     """An agronomic assistant should not be creative."""
     s = _isolated_settings(monkeypatch)
     assert 0.0 <= s.llm_temperature <= 0.3
+
+
+def test_byok_settings_defaults(monkeypatch):
+    for name in ("LLM_KEY_ENCRYPTION_KEYS", "LLM_ENDPOINT_ALLOWLIST",
+                 "LLM_PLATFORM_FALLBACK", "MAX_TOKENS_PER_TURN_CEILING",
+                 "MAX_TOKENS_PER_TURN"):
+        monkeypatch.delenv(name, raising=False)
+    s = Settings(_env_file=None)
+    assert s.llm_key_encryption_keys == ""
+    assert s.llm_endpoint_allowlist == ""
+    assert s.llm_platform_fallback is False
+    assert s.max_tokens_per_turn_ceiling == 4000
+
+
+def test_ceiling_falls_back_to_legacy_env(monkeypatch):
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN_CEILING", raising=False)
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN", "2500")
+    s = Settings(_env_file=None)
+    assert s.max_tokens_per_turn_ceiling == 2500
+    assert s.max_tokens_per_turn == 2500
+
+
+def test_ceiling_env_wins_over_legacy(monkeypatch):
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "3000")
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN", "2500")
+    s = Settings(_env_file=None)
+    assert s.max_tokens_per_turn_ceiling == 3000

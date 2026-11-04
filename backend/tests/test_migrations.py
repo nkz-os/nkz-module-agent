@@ -25,6 +25,7 @@ from tests.conftest import (
     MIGRATION_001,
     MIGRATION_002,
     MIGRATION_003,
+    MIGRATION_004,
     PLATFORM_ROLE_SQL,
     requires_db,
 )
@@ -373,4 +374,117 @@ async def test_identity_tables_work_for_module_role():
         assert seen == 0
     finally:
         await conn.execute("RESET ROLE")
+        await conn.close()
+
+
+async def _apply_all(conn: asyncpg.Connection) -> None:
+    await conn.execute(PLATFORM_ROLE_SQL)
+    for m in (MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004):
+        await conn.execute(m.read_text())
+
+
+_INSERT_CONFIG = (
+    "INSERT INTO agent_module.tenant_llm_configs "
+    "(tenant_id, provider, model, api_key_ciphertext, api_key_last4, "
+    "max_tokens_per_turn, updated_by) "
+    "VALUES ('tenant_a','p','m',$1,'abcd',$2,'u')"
+)
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_004_creates_tenant_llm_configs_with_forced_rls():
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await _apply_all(conn)
+
+        row = await conn.fetchrow(
+            "SELECT c.relrowsecurity, c.relforcerowsecurity, "
+            "pg_get_userbyid(c.relowner) AS owner "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'agent_module' AND c.relname = 'tenant_llm_configs'"
+        )
+        assert row is not None, "tenant_llm_configs missing"
+        assert row["relrowsecurity"] is True
+        assert row["relforcerowsecurity"] is True
+        assert row["owner"] == MODULE_ROLE
+        assert await conn.fetchval(
+            "SELECT count(*) FROM pg_policies WHERE schemaname = 'agent_module' "
+            "AND tablename = 'tenant_llm_configs'"
+        ) == 1
+        cols = {
+            r["column_name"]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'agent_module' "
+                "AND table_name = 'tenant_llm_configs'"
+            )
+        }
+        assert cols == {
+            "tenant_id", "provider", "model", "api_base", "api_key_ciphertext",
+            "api_key_last4", "max_tokens_per_turn", "updated_by", "updated_at",
+        }
+    finally:
+        await conn.close()
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_004_llm_origin_check_rejects_unknown_value():
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await _apply_all(conn)
+        insert = (
+            "INSERT INTO agent_module.agent_turn_audit "
+            "(trace_id, tenant_id, user_id, channel, channel_user_id, outcome, "
+            "llm_origin) VALUES ($1,'tenant_a','u','telegram','42','ok',$2)"
+        )
+        for good in ("tenant", "platform", "none", None):
+            await conn.execute(insert, f"t-{good}", good)
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(insert, "t-bad", "x")
+    finally:
+        await conn.close()
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_004_max_tokens_check_rejects_non_positive():
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await _apply_all(conn)
+        await conn.execute(_INSERT_CONFIG, b"\x00", None)  # NULL = ceiling
+        await conn.execute("DELETE FROM agent_module.tenant_llm_configs")
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(_INSERT_CONFIG, b"\x00", 0)
+    finally:
+        await conn.close()
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_004_rerun_is_a_noop():
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await _apply_all(conn)
+        await conn.execute(_INSERT_CONFIG, b"\x01", 100)
+        await conn.execute(MIGRATION_004.read_text())
+        await conn.execute(MIGRATION_004.read_text())
+        assert await conn.fetchval(
+            "SELECT count(*) FROM agent_module.tenant_llm_configs"
+        ) == 1
+        assert await conn.fetchval(
+            "SELECT count(*) FROM pg_policies WHERE schemaname = 'agent_module' "
+            "AND tablename = 'tenant_llm_configs'"
+        ) == 1
+        owner = await conn.fetchval(
+            "SELECT pg_get_userbyid(relowner) FROM pg_class "
+            "WHERE oid = 'agent_module.tenant_llm_configs'::regclass"
+        )
+        assert owner == MODULE_ROLE
+    finally:
         await conn.close()

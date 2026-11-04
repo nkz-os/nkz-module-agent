@@ -39,6 +39,7 @@ from app.agent.loop import run_turn
 from app.domain.messages import InboundMessage, VoiceRef
 from app.domain.session import SessionContext
 from app.llm.provider import LLMReply
+from app.llm.provider import complete as provider_complete
 from evals.fixtures import RETRIEVED_DATE, build_tools, citation_sources
 
 Lang = Literal["es", "en", "eu"]
@@ -178,7 +179,12 @@ class LiveProvider:
     """The module's real provider: nothing is patched, env decides the model."""
 
     def complete_for(self, case: Case) -> CompleteFn | None:
-        return None
+        # Platform branch only: tenant_id=None skips the tenant config read,
+        # so live evals need no database.
+        async def complete(messages, tools=None, *, tenant_id=None) -> LLMReply:
+            return await provider_complete(messages, tools, tenant_id=None)
+
+        return complete
 
 
 _TEXT = {

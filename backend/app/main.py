@@ -10,7 +10,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings, require_postgres_url
+from app.llm import keys as llm_keys
 from app.api import router as api_router
+from app.api.llm_config import router as llm_config_router
 from app.api.internal import router as internal_router
 from app.api.webhook import router as webhook_router
 
@@ -58,6 +60,12 @@ async def lifespan(app: FastAPI):
     """
     settings = get_settings()
     require_postgres_url()
+    if not llm_keys.available():
+        # Peripheral secret: log loudly, never exit. Tenant BYOK stays off.
+        logger.critical(
+            "byok_unavailable: LLM_KEY_ENCRYPTION_KEYS is unset or invalid; "
+            "tenant LLM configuration is disabled"
+        )
     logger.info("%s v%s starting — prefix=%s debug=%s",
                 settings.app_name, settings.app_version,
                 settings.api_prefix, settings.debug)
@@ -101,6 +109,7 @@ def create_app() -> FastAPI:
     
     # Include API routes
     app.include_router(api_router, prefix=settings.api_prefix)
+    app.include_router(llm_config_router, prefix=settings.api_prefix)
 
     # Internal routes (entity-manager, other in-cluster callers) — authenticated
     # by X-Internal-Service-Secret, NOT gateway headers. See app/api/internal.py.

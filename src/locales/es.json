@@ -13,5 +13,60 @@
   "linked": "Cuentas vinculadas",
   "none": "No hay ninguna cuenta vinculada.",
   "revoke": "Desvincular",
-  "error": "No se ha podido completar la operación."
+  "error": "No se ha podido completar la operación.",
+  "llm": {
+    "title": "Asistente: proveedor de IA",
+    "intro": "El asistente usa el proveedor de IA y la clave propios de tu organización. Tu organización paga directamente al proveedor lo que el asistente consume.",
+    "keyNote": "La clave se guarda cifrada y no se vuelve a mostrar; solo se ven sus cuatro últimos caracteres.",
+    "unavailable": "Ahora mismo no se puede guardar un proveedor en esta plataforma.",
+    "noneAllowed": "Todavía no hay ningún proveedor de IA habilitado en esta plataforma.",
+    "notConfigured": "No hay proveedor configurado: hasta que añadas uno, el asistente responderá que no está configurado.",
+    "provider": "Proveedor",
+    "apiBase": "Dirección del servicio",
+    "apiBaseHint": "Debe empezar por {{origin}}",
+    "model": "Modelo",
+    "apiKey": "Clave",
+    "keyRequired": "Introduce la clave de este proveedor.",
+    "keyKeep": "Déjala vacía para conservar la clave guardada.",
+    "budget": "Máximo de tokens por respuesta (opcional, hasta {{ceiling}})",
+    "save": "Guardar",
+    "test": "Probar conexión",
+    "remove": "Quitar proveedor",
+    "savedKey": "Clave guardada: …{{last4}}",
+    "saved": "Guardado.",
+    "testOk": "El proveedor ha respondido correctamente.",
+    "testFailed": "El proveedor no ha respondido.",
+    "noMatch": "El proveedor guardado no está en la lista permitida. Elige un proveedor e introduce de nuevo su clave.",
+    "choose": "Elige un proveedor",
+    "errors": {
+      "choose_provider": "Elige un proveedor de la lista.",
+      "byok_unavailable": "Ahora mismo no se puede guardar un proveedor en esta plataforma.",
+      "endpoint_not_allowed": "Este proveedor o esta dirección no están habilitados en la plataforma.",
+      "key_required": "Hace falta la clave al añadir un proveedor o al cambiar su proveedor o dirección.",
+      "budget_above_ceiling": "El límite de tokens supera el máximo permitido.",
+      "invalid_model": "El nombre del modelo no es válido.",
+      "invalid_key": "La clave no es válida.",
+      "invalid_body": "Algún campo no es válido."
+    },
+    "notices": {
+      "blocked": "Este proveedor ya no está habilitado en la plataforma. Elige otro.",
+      "key_unreadable": "La clave guardada ya no se puede leer. Introdúcela de nuevo."
+    },
+    "testErrors": {
+      "not_configured": "No hay proveedor configurado.",
+      "provider_error": "El proveedor devolvió un error.",
+      "generic": "La prueba ha fallado."
+    },
+    "noticeGeneric": "El asistente no está disponible con la configuración actual."
+  },
+  "usage": {
+    "title": "Consumo de este mes",
+    "empty": "Aún no hay consumo este mes.",
+    "date": "Día",
+    "turns": "Respuestas",
+    "tokensIn": "Tokens de entrada",
+    "tokensOut": "Tokens de salida",
+    "cost": "Coste, estimación (USD)",
+    "total": "Total"
+  }
 }

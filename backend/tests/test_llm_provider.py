@@ -14,14 +14,29 @@ def clear_settings():
     get_settings.cache_clear()
 
 
-def test_unconfigured_when_no_model(monkeypatch):
+@pytest.fixture(autouse=True)
+def _platform_fallback_on(monkeypatch):
+    """Most tests here exercise the platform branch; BYOK ones override."""
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_when_no_model(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "")
-    assert is_configured() is False
+    assert await is_configured("t") is False
 
 
-def test_configured_when_model_present(monkeypatch):
+@pytest.mark.asyncio
+async def test_configured_when_model_present(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "some/model")
-    assert is_configured() is True
+    assert await is_configured("t") is True
+
+
+@pytest.mark.asyncio
+async def test_not_configured_without_fallback_even_with_model(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "false")
+    assert await is_configured("t") is False
 
 
 @pytest.mark.asyncio
@@ -279,9 +294,10 @@ async def test_complete_consumes_the_resolver(monkeypatch):
 
         return _Resp()
 
-    monkeypatch.setattr(
-        "app.llm.provider.resolve_provider", lambda tenant_id: _fake_resolved()
-    )
+    async def _resolved(tenant_id):
+        return _fake_resolved()
+
+    monkeypatch.setattr("app.llm.provider.resolve_provider", _resolved)
     monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
 
     reply = await complete([{"role": "user", "content": "hola"}], tenant_id="t")
@@ -296,11 +312,144 @@ async def test_complete_resolver_none_never_calls_the_provider(monkeypatch):
     async def fail_if_called(**kwargs):
         raise AssertionError("acompletion must not be called when origin is none")
 
-    monkeypatch.setattr(
-        "app.llm.provider.resolve_provider",
-        lambda tenant_id: _fake_resolved(model="", api_key="", origin="none"),
-    )
+    async def _resolved(tenant_id):
+        return _fake_resolved(model="", api_key="", origin="none", notice="blocked")
+
+    monkeypatch.setattr("app.llm.provider.resolve_provider", _resolved)
     monkeypatch.setattr("app.llm.provider.acompletion", fail_if_called)
 
     with pytest.raises(LLMUnconfigured):
         await complete([{"role": "user", "content": "hola"}])
+
+
+# --- BYOK: the tenant's own provider through the real resolver. ---
+
+TENANT_KEY = "sk-tenant-CANARY-77be"
+
+
+def _tenant_setup(monkeypatch, *, allowlist="provider-a"):
+    from datetime import datetime, timezone
+
+    from app.llm import resolver
+    from app.llm.configs import TenantLLMConfig
+
+    row = TenantLLMConfig(
+        tenant_id="tenant-a", provider="provider-a", model="m1", api_base=None,
+        api_key_ciphertext=TENANT_KEY.encode(), api_key_last4="77be",
+        max_tokens_per_turn=None, updated_by="u", updated_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_get(tenant_id):
+        return row
+
+    monkeypatch.setattr(resolver.configs, "get", fake_get)
+    monkeypatch.setattr(resolver.keys, "decrypt", lambda ct: ct.decode())
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", allowlist)
+    monkeypatch.setenv("LLM_MODEL", "platform/model")
+    monkeypatch.setenv("LLM_API_KEY", "platform-key")
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+
+
+class _OkResp:
+    class _Msg:
+        content = "ok"
+        tool_calls = None
+
+    class _Choice:
+        message = None
+
+    usage = None
+
+    def __init__(self):
+        self._Choice.message = self._Msg()
+        self.choices = [self._Choice()]
+
+
+@pytest.mark.asyncio
+async def test_tenant_call_passes_provider_and_key(monkeypatch):
+    seen = {}
+
+    async def fake_acompletion(**kwargs):
+        seen.update(kwargs)
+        return _OkResp()
+
+    _tenant_setup(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    reply = await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
+    assert seen["model"] == "provider-a/m1"
+    assert seen["custom_llm_provider"] == "provider-a"
+    assert seen["api_key"] == TENANT_KEY
+    assert "api_base" not in seen
+    assert reply.origin == "tenant"
+
+
+@pytest.mark.asyncio
+async def test_platform_call_has_no_custom_provider(monkeypatch):
+    seen = {}
+
+    async def fake_acompletion(**kwargs):
+        seen.update(kwargs)
+        return _OkResp()
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    reply = await complete([{"role": "user", "content": "hola"}])
+    assert "custom_llm_provider" not in seen
+    assert reply.origin == "platform"
+
+
+@pytest.mark.asyncio
+async def test_blocked_tenant_never_calls_provider_even_with_platform(monkeypatch):
+    async def fail_if_called(**kwargs):
+        raise AssertionError("acompletion must not be called for a blocked tenant")
+
+    _tenant_setup(monkeypatch, allowlist="provider-c")
+    monkeypatch.setattr("app.llm.provider.acompletion", fail_if_called)
+    with pytest.raises(LLMUnconfigured) as exc_info:
+        await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
+    assert exc_info.value.notice == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_stored_url_model_never_reaches_the_provider(monkeypatch):
+    from app.llm import resolver
+
+    async def fail_if_called(**kwargs):
+        raise AssertionError("acompletion must not be called for a URL model")
+
+    _tenant_setup(monkeypatch)
+    real_get = resolver.configs.get
+
+    async def url_model(tenant_id):
+        import dataclasses
+        return dataclasses.replace(await real_get(tenant_id), model="http://orion.internal/x")
+
+    monkeypatch.setattr(resolver.configs, "get", url_model)
+    monkeypatch.setattr("app.llm.provider.acompletion", fail_if_called)
+    with pytest.raises(LLMUnconfigured) as exc_info:
+        await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
+    assert exc_info.value.notice == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_tenant_key_in_provider_error_is_redacted(monkeypatch, caplog):
+    import traceback
+
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError(f"401 bad key {kwargs['api_key']}")
+
+    _tenant_setup(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(LLMProviderError) as exc_info:
+            await complete([{"role": "user", "content": "hola"}], tenant_id="tenant-a")
+    assert "[redacted]" in str(exc_info.value)
+    assert TENANT_KEY not in str(exc_info.value)
+    assert TENANT_KEY not in "".join(traceback.format_exception(exc_info.value))
+    assert TENANT_KEY not in caplog.text
+
+
+def test_estimate_cost_is_none_for_an_unknown_model():
+    from app.llm.provider import estimate_cost
+
+    assert estimate_cost("nonexistent/model-xyz", 10, 5) is None

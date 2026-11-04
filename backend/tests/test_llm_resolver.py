@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 
 import pytest
 
@@ -14,6 +15,11 @@ def clear_settings():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_fallback_by_default(monkeypatch):
+    monkeypatch.delenv("LLM_PLATFORM_FALLBACK", raising=False)
+
+
 def _configure_platform(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "some/model")
     monkeypatch.setenv("LLM_API_BASE", "http://example.invalid")
@@ -25,45 +31,141 @@ def _clear_platform(monkeypatch):
         monkeypatch.setenv(name, "")
 
 
-def test_platform_settings_resolve_to_platform(monkeypatch):
-    _configure_platform(monkeypatch)
-    got = resolve_provider("tenant_a")
-    assert got == ResolvedProvider(
-        model="some/model",
-        api_base="http://example.invalid",
-        api_key="platform-key",
-        origin="platform",
+pytestmark = pytest.mark.asyncio
+
+KEY = "sk-test-CANARY-91ac"
+
+
+def _row(provider="provider-a", model="m1", api_base=None, key=KEY):
+    from app.llm.configs import TenantLLMConfig
+    from datetime import datetime, timezone
+
+    return TenantLLMConfig(
+        tenant_id="tenant-a", provider=provider, model=model, api_base=api_base,
+        api_key_ciphertext=key.encode(), api_key_last4=key[-4:],
+        max_tokens_per_turn=None, updated_by="u", updated_at=datetime.now(timezone.utc),
     )
 
 
-def test_nothing_configured_resolves_to_none(monkeypatch):
-    _clear_platform(monkeypatch)
-    got = resolve_provider("tenant_a")
+@pytest.fixture
+def tenant_row(monkeypatch):
+    """Control the tenant row; the key 'decrypts' to the ciphertext text."""
+    state = {"row": None}
+
+    async def fake_get(tenant_id):
+        return state["row"]
+
+    monkeypatch.setattr(resolver.configs, "get", fake_get)
+    monkeypatch.setattr(resolver.keys, "decrypt", lambda ct: ct.decode())
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "provider-a")
+    return state
+
+
+async def test_no_row_no_fallback_is_none_even_with_platform_set(monkeypatch, tenant_row):
+    _configure_platform(monkeypatch)
+    got = await resolve_provider("tenant-a")
     assert got.origin == "none"
-    assert (got.model, got.api_base, got.api_key) == ("", "", "")
+    assert got.notice is None
+    assert (got.model, got.api_key) == ("", "")
+    assert await tenant_provider("tenant-a") is None
 
 
-def test_tenant_branch_is_a_pinned_stub(monkeypatch):
-    """F3c fills this in; until then a tenant can never resolve to its own provider."""
+async def test_no_row_with_fallback_is_platform(monkeypatch, tenant_row):
     _configure_platform(monkeypatch)
-    assert tenant_provider("tenant_a") is None
-    assert resolve_provider("tenant_a").origin == "platform"
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    got = await resolve_provider("tenant-a")
+    assert got == ResolvedProvider(
+        model="some/model", api_base="http://example.invalid",
+        api_key="platform-key", origin="platform",
+    )
 
 
-def test_tenant_provider_wins_over_platform(monkeypatch):
+async def test_fallback_without_platform_model_is_none(monkeypatch, tenant_row):
+    _clear_platform(monkeypatch)
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    assert (await resolve_provider("tenant-a")).origin == "none"
+
+
+async def test_no_tenant_id_never_reads_a_row(monkeypatch, tenant_row):
     _configure_platform(monkeypatch)
-    tenant = ResolvedProvider(
-        model="tenant/model", api_base="", api_key="tenant-key", origin="tenant"
-    )
-    monkeypatch.setattr(resolver, "tenant_provider", lambda tenant_id: tenant)
-
-    assert resolve_provider("tenant_a") == tenant, (
-        "platform must not shadow a tenant provider"
-    )
-    assert resolve_provider(None).origin == "platform"
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    tenant_row["row"] = _row()
+    assert (await resolve_provider(None)).origin == "platform"
 
 
-def test_resolved_provider_is_frozen():
+async def test_allowed_row_resolves_to_tenant(monkeypatch, tenant_row):
+    _configure_platform(monkeypatch)
+    tenant_row["row"] = _row()
+    got = await resolve_provider("tenant-a")
+    assert got.origin == "tenant"
+    assert got.model == "provider-a/m1"
+    assert got.provider == "provider-a"
+    assert got.api_key == KEY
+    assert got.api_base == ""
+    assert got.notice is None
+
+
+async def test_tenant_api_base_passes_through_when_allowlisted(monkeypatch, tenant_row):
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "openai@https://llm.example.test")
+    tenant_row["row"] = _row(provider="openai", api_base="https://llm.example.test/v1")
+    got = await resolve_provider("tenant-a")
+    assert got.origin == "tenant"
+    assert got.api_base == "https://llm.example.test/v1"
+
+
+async def test_narrowed_allowlist_blocks_and_never_uses_platform(monkeypatch, tenant_row):
+    _configure_platform(monkeypatch)
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "provider-c")
+    tenant_row["row"] = _row()
+    got = await resolve_provider("tenant-a")
+    assert got.origin == "none"
+    assert got.notice == "blocked"
+    assert got.api_key == ""
+
+
+async def test_empty_allowlist_blocks(monkeypatch, tenant_row):
+    monkeypatch.setenv("LLM_ENDPOINT_ALLOWLIST", "")
+    tenant_row["row"] = _row()
+    assert (await resolve_provider("tenant-a")).notice == "blocked"
+
+
+async def test_unreadable_key_logs_error_without_key(monkeypatch, tenant_row, caplog):
+    from app.llm.keys import KeyUnreadable
+
+    def boom(ct):
+        raise KeyUnreadable("cannot decrypt")
+
+    monkeypatch.setattr(resolver.keys, "decrypt", boom)
+    _configure_platform(monkeypatch)
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    tenant_row["row"] = _row()
+    with caplog.at_level(logging.ERROR):
+        got = await resolve_provider("tenant-a")
+    assert got.origin == "none"
+    assert got.notice == "key_unreadable"
+    assert "byok_key_unreadable tenant_id=tenant-a" in caplog.text
+    assert KEY not in caplog.text
+
+
+async def test_resolved_provider_is_frozen():
     got = ResolvedProvider(model="m", api_base="", api_key="", origin="none")
     with pytest.raises(dataclasses.FrozenInstanceError):
         got.model = "other"
+
+
+@pytest.mark.parametrize("model", ["http://orion.internal:1026/x", "HTTPS://h.example.test/m"])
+async def test_stored_url_model_is_blocked(monkeypatch, tenant_row, model):
+    _configure_platform(monkeypatch)
+    monkeypatch.setenv("LLM_PLATFORM_FALLBACK", "true")
+    tenant_row["row"] = _row(model=model)
+    got = await resolve_provider("tenant-a")
+    assert got.origin == "none" and got.notice == "blocked"
+    assert got.api_key == "" and got.model == ""
+
+
+async def test_resolved_provider_repr_hides_the_key(monkeypatch, tenant_row):
+    tenant_row["row"] = _row()
+    got = await resolve_provider("tenant-a")
+    assert got.api_key == KEY
+    assert KEY not in repr(got) and KEY not in str(got)

@@ -137,6 +137,10 @@ spec:
                   name: jwt-secret
                   key: secret
                   optional: true
+            # The SDK verifies the gateway signature only when this is "true";
+            # without it the identity headers are trusted unsigned.
+            - name: REQUIRE_HMAC_SIGNATURE
+              value: "true"
             # Language model — per-deployment, no hardcoded model/endpoint.
             # Peripheral, not core: unset means the module starts, logs
             # CRITICAL and answers with a not-configured notice instead of
@@ -155,6 +159,29 @@ spec:
                   optional: true
             - name: LLM_TEMPERATURE
               value: "0.1"
+            # Per-tenant LLM config (BYOK). Master keys come from a Secret;
+            # unset = BYOK unavailable (logged CRITICAL, service keeps running).
+            - name: LLM_KEY_ENCRYPTION_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: agent-llm-secret
+                  key: key-encryption-keys
+                  optional: true
+            # Read from the agent-config ConfigMap (optional: unset = code
+            # defaults, empty allowlist / no platform fallback). An explicit
+            # `value` here would shadow the ConfigMap.
+            - name: LLM_ENDPOINT_ALLOWLIST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: LLM_ENDPOINT_ALLOWLIST
+                  optional: true
+            - name: LLM_PLATFORM_FALLBACK
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: LLM_PLATFORM_FALLBACK
+                  optional: true
             # Hard per-turn budget — without these an agent can loop, and a
             # loop on a public endpoint is unbounded spend and latency.
             - name: MAX_ITERATIONS
@@ -162,6 +189,8 @@ spec:
             - name: MAX_TOOL_CALLS
               value: "8"
             - name: MAX_TOKENS_PER_TURN
+              value: "4000"
+            - name: MAX_TOKENS_PER_TURN_CEILING
               value: "4000"
             - name: TURN_TIMEOUT_SECONDS
               value: "45"

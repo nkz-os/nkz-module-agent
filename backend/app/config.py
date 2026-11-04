@@ -6,6 +6,7 @@ Environment-based configuration using pydantic-settings.
 
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -78,11 +79,30 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_temperature: float = 0.1
 
+    # Per-tenant provider config (BYOK). Master keys for the stored API keys:
+    # comma-separated Fernet keys, the first encrypts, all decrypt (rotation).
+    # Empty = BYOK unavailable (fail-closed, nothing stored in clear).
+    llm_key_encryption_keys: str = ""
+    # Comma-separated exact origins a tenant may use as api_base. Empty = none.
+    llm_endpoint_allowlist: str = ""
+    # A tenant WITHOUT its own config may use the platform provider only when
+    # this is true. A tenant with a config never falls back.
+    llm_platform_fallback: bool = False
+
     # Hard per-turn budget. Without these an agent can loop, and a loop on a
     # public endpoint is unbounded spend and unbounded latency.
     max_iterations: int = 4
     max_tool_calls: int = 8
     max_tokens_per_turn: int = 4000
+    # Platform ceiling on a tenant's per-turn token budget. Reads
+    # MAX_TOKENS_PER_TURN_CEILING; falls back to the legacy MAX_TOKENS_PER_TURN
+    # so existing deployments keep their value.
+    max_tokens_per_turn_ceiling: int = Field(
+        default=4000,
+        validation_alias=AliasChoices(
+            "MAX_TOKENS_PER_TURN_CEILING", "MAX_TOKENS_PER_TURN"
+        ),
+    )
     turn_timeout_seconds: int = 45
 
     # Tool registry: how long one tenant's installed-module intersection is
@@ -103,6 +123,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        populate_by_name = True
 
 
 @lru_cache

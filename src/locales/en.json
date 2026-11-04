@@ -13,5 +13,60 @@
   "linked": "Linked accounts",
   "none": "No accounts linked.",
   "revoke": "Unlink",
-  "error": "The operation could not be completed."
+  "error": "The operation could not be completed.",
+  "llm": {
+    "title": "Assistant: AI provider",
+    "intro": "The assistant uses your organisation's own AI provider and key. Your organisation pays the provider directly for what the assistant uses.",
+    "keyNote": "The key is stored encrypted and is never shown again; only its last four characters are displayed.",
+    "unavailable": "Saving a provider is not available on this platform right now.",
+    "noneAllowed": "No AI provider is enabled on this platform yet.",
+    "notConfigured": "No provider is set up: until you add one, the assistant will answer that it is not configured.",
+    "provider": "Provider",
+    "apiBase": "Endpoint address",
+    "apiBaseHint": "Must start with {{origin}}",
+    "model": "Model",
+    "apiKey": "Key",
+    "keyRequired": "Enter the key for this provider.",
+    "keyKeep": "Leave empty to keep the saved key.",
+    "budget": "Maximum tokens per answer (optional, up to {{ceiling}})",
+    "save": "Save",
+    "test": "Test connection",
+    "remove": "Remove provider",
+    "savedKey": "Saved key: …{{last4}}",
+    "saved": "Saved.",
+    "testOk": "The provider answered correctly.",
+    "testFailed": "The provider did not answer.",
+    "noMatch": "The stored provider is not in the allowed list. Choose a provider and enter its key again.",
+    "choose": "Choose a provider",
+    "errors": {
+      "choose_provider": "Choose a provider from the list.",
+      "byok_unavailable": "Saving a provider is not available on this platform right now.",
+      "endpoint_not_allowed": "This provider or address is not enabled on this platform.",
+      "key_required": "A key is required when you add a provider or change its provider or address.",
+      "budget_above_ceiling": "The token limit is above the maximum allowed.",
+      "invalid_model": "The model name is not valid.",
+      "invalid_key": "The key is not valid.",
+      "invalid_body": "Some fields are not valid."
+    },
+    "notices": {
+      "blocked": "This provider is no longer enabled on this platform. Choose another one.",
+      "key_unreadable": "The saved key can no longer be read. Enter the key again."
+    },
+    "testErrors": {
+      "not_configured": "No provider is set up.",
+      "provider_error": "The provider returned an error.",
+      "generic": "The test failed."
+    },
+    "noticeGeneric": "The assistant is not available with the current settings."
+  },
+  "usage": {
+    "title": "Usage this month",
+    "empty": "No usage yet this month.",
+    "date": "Day",
+    "turns": "Answers",
+    "tokensIn": "Tokens in",
+    "tokensOut": "Tokens out",
+    "cost": "Cost, estimate (USD)",
+    "total": "Total"
+  }
 }
