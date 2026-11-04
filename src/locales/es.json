@@ -54,10 +54,16 @@
     },
     "testErrors": {
       "not_configured": "No hay proveedor configurado.",
-      "provider_error": "El proveedor devolvió un error.",
-      "generic": "La prueba ha fallado."
+      "provider_error": "Error del proveedor.",
+      "generic": "La prueba ha fallado.",
+      "auth_failed": "El proveedor ha rechazado la clave.",
+      "not_found": "Modelo o dirección no encontrados.",
+      "quota_or_rate_limit": "Sin saldo o límite de uso alcanzado.",
+      "bad_request": "El proveedor ha rechazado la petición (revisa el nombre del modelo).",
+      "unreachable": "No se puede conectar con el proveedor."
     },
-    "noticeGeneric": "El asistente no está disponible con la configuración actual."
+    "noticeGeneric": "El asistente no está disponible con la configuración actual.",
+    "testDetail": "Respuesta del proveedor:"
   },
   "usage": {
     "title": "Consumo de este mes",

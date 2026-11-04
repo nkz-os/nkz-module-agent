@@ -46,7 +46,15 @@ function originOf(value: string | null | undefined): string | null {
 }
 
 const NOTICES = ['blocked', 'key_unreadable'];
-const TEST_ERRORS = ['not_configured', 'provider_error'];
+const TEST_ERRORS = [
+  'not_configured',
+  'provider_error',
+  'auth_failed',
+  'not_found',
+  'quota_or_rate_limit',
+  'bad_request',
+  'unreachable',
+];
 
 const entryKey = (e: AllowedEntry) => `${e.provider}@${e.origin ?? ''}`;
 
@@ -80,14 +88,14 @@ export function LlmConfigPanel() {
   const [budget, setBudget] = useState('');
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string; detail?: string | null } | null>(null);
 
   const applyConfig = useCallback((c: LlmConfig) => {
     setCfg(c);
     const e = initialEntry(c);
     setEntryId(e ? entryKey(e) : '');
     setModel(c.model ?? '');
-    setApiBase(c.api_base ?? e?.origin ?? '');
+    setApiBase(c.api_base ?? '');
     setBudget(c.max_tokens_per_turn ? String(c.max_tokens_per_turn) : '');
     setApiKey('');
   }, []);
@@ -116,9 +124,9 @@ export function LlmConfigPanel() {
     t(KNOWN_ERRORS.includes(code) ? `llm.errors.${code}` : 'error');
 
   const onProviderChange = (id: string) => {
-    const next = cfg.allowed.find((e) => entryKey(e) === id) ?? null;
     setEntryId(id);
-    setApiBase(next?.origin ?? '');
+    // Never prefill: the address must be typed, the origin is only a hint.
+    setApiBase('');
     // A key belongs to one provider: never carry it over to another.
     setApiKey('');
     setSaved(false);
@@ -222,6 +230,7 @@ export function LlmConfigPanel() {
                   className={inputClass}
                   type="text"
                   value={apiBase}
+                  placeholder={origin}
                   onChange={(ev) => {
                     setApiBase(ev.target.value);
                     setApiKey('');
@@ -310,14 +319,21 @@ export function LlmConfigPanel() {
           {saved && <p className="text-nkz-text-secondary">{t('llm.saved')}</p>}
           {testResult?.ok && <p className="text-nkz-text-secondary">{t('llm.testOk')}</p>}
           {testResult && !testResult.ok && (
-            <p className="text-nkz-danger">
-              {t('llm.testFailed')}{' '}
-              {t(
-                testResult.error && TEST_ERRORS.includes(testResult.error)
-                  ? `llm.testErrors.${testResult.error}`
-                  : 'llm.testErrors.generic',
+            <div className="flex flex-col gap-1">
+              <p className="text-nkz-danger">
+                {t('llm.testFailed')}{' '}
+                {t(
+                  testResult.error && TEST_ERRORS.includes(testResult.error)
+                    ? `llm.testErrors.${testResult.error}`
+                    : 'llm.testErrors.generic',
+                )}
+              </p>
+              {testResult.detail && (
+                <p className="text-nkz-text-muted text-nkz-sm break-words">
+                  {t('llm.testDetail')} {testResult.detail}
+                </p>
               )}
-            </p>
+            </div>
           )}
           {errorCode && <p className="text-nkz-danger">{errorText(errorCode)}</p>}
         </>

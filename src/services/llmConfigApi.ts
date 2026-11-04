@@ -89,5 +89,5 @@ export const putLlmConfig = (body: LlmConfigInput) =>
   call<LlmConfig>('/llm-config', { method: 'PUT', body: JSON.stringify(body) });
 export const deleteLlmConfig = () => call<void>('/llm-config', { method: 'DELETE' });
 export const testLlmConfig = () =>
-  call<{ ok: boolean; error?: string }>('/llm-config/test', { method: 'POST' });
+  call<{ ok: boolean; error?: string; detail?: string | null }>('/llm-config/test', { method: 'POST' });
 export const getUsage = () => call<Usage>('/usage');
