@@ -564,3 +564,41 @@ async def test_detail_is_cut_to_300(monkeypatch):
     with pytest.raises(LLMProviderError) as exc_info:
         await complete([{"role": "user", "content": "hola"}])
     assert len(exc_info.value.detail) <= 300
+
+
+@pytest.mark.asyncio
+async def test_tools_call_reaches_the_network_layer_unmocked():
+    """NOT mocked: litellm imports `mcp` when tools are passed, and `mcp` is
+    not a declared litellm dependency. A missing install surfaces as an
+    APIConnectionError mentioning the module instead of a real connection
+    failure. Port 9 (discard) on loopback refuses the connection."""
+    import litellm
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "noop",
+                "description": "x",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with pytest.raises(Exception) as exc_info:
+        await litellm.acompletion(
+            model="openai/x",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=tools,
+            api_base="http://127.0.0.1:9/v1",
+            api_key="sk-synthetic-regression-0000",
+            timeout=3,
+            num_retries=0,
+        )
+    text = str(exc_info.value)
+    assert "No module named" not in text
+    # A real refused connection (litellm may classify it as a connection,
+    # timeout or server error depending on version).
+    assert isinstance(
+        exc_info.value,
+        litellm.APIConnectionError | litellm.Timeout | litellm.InternalServerError,
+    ) and "onnection" in text
