@@ -25,8 +25,11 @@ nobody downstream has to know litellm exists:
 from __future__ import annotations
 
 import logging
+import re
+import urllib.parse
 from dataclasses import dataclass
 
+import litellm
 from litellm import acompletion
 
 from app.config import get_settings
@@ -52,11 +55,22 @@ class LLMProviderError(Exception):
 
     The message is sanitized: the configured API key never appears in it.
     `origin` says whose provider failed (tenant/platform) for the audit.
+    `kind` is a fixed code for the failure class; `detail` is the sanitized,
+    length-capped provider text. Only the connection-test route may show
+    either to a person; agent turns never do.
     """
 
-    def __init__(self, message: str = "", origin: str | None = None):
+    def __init__(
+        self,
+        message: str = "",
+        origin: str | None = None,
+        kind: str = "provider_error",
+        detail: str | None = None,
+    ):
         super().__init__(message)
         self.origin = origin
+        self.kind = kind
+        self.detail = message if detail is None else detail
 
 
 @dataclass(frozen=True)
@@ -75,17 +89,46 @@ async def is_configured(tenant_id: str | None) -> bool:
     return (await resolve_provider(tenant_id)).origin != "none"
 
 
+_DETAIL_MAX = 300
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_NOISE_LINES = ("give feedback / get help", "litellm.info")
+
+
 def _sanitize(message: str, secret: str) -> str:
-    """Strip a configured secret out of a message before it can leak.
+    """Make a provider message safe to show: no key, no library noise.
 
     A provider's own error text can echo back the credential it just
-    rejected (some auth-failure responses do this, in whole or in part), so
-    scrubbing the literal secret value — not just avoiding logging it
-    ourselves — is what actually closes the leak.
+    rejected (whole, URL-quoted, or cut short), so every form is scrubbed —
+    not just avoiding logging it ourselves. ANSI colour codes and LiteLLM's
+    "Give Feedback" / "LiteLLM.Info" lines are removed, whitespace collapsed.
     """
-    if not secret:
-        return message
-    return message.replace(secret, "[redacted]")
+    text = _ANSI.sub("", message)
+    if secret:
+        forms = [secret, urllib.parse.quote(secret, safe="")]
+        if len(secret) >= 8:
+            forms.append(secret[:-4])
+        for form in forms:
+            text = text.replace(form, "[redacted]")
+    lines = [
+        ln for ln in text.splitlines()
+        if not any(n in ln.lower() for n in _NOISE_LINES)
+    ]
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def _kind_of(exc: Exception) -> str:
+    """Fixed failure code for an exception raised by the provider call."""
+    if isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)):
+        return "auth_failed"
+    if isinstance(exc, litellm.NotFoundError):
+        return "not_found"
+    if isinstance(exc, litellm.RateLimitError):
+        return "quota_or_rate_limit"
+    if isinstance(exc, litellm.BadRequestError):
+        return "bad_request"
+    if isinstance(exc, (litellm.Timeout, litellm.APIConnectionError)):
+        return "unreachable"
+    return "provider_error"
 
 
 async def complete(
@@ -140,7 +183,7 @@ async def complete(
             origin=resolved.origin,
         )
     except Exception as exc:
-        detail = _sanitize(str(exc), resolved.api_key)
+        detail = _sanitize(str(exc), resolved.api_key)[:_DETAIL_MAX]
         logger.error(
             "llm_completion_failed model=%s origin=%s error=%s",
             resolved.model,
@@ -149,7 +192,9 @@ async def complete(
         )
         # `from None`: suppress __context__ so nothing prints the original
         # (possibly unredacted) exception via traceback chaining.
-        raise LLMProviderError(detail, origin=resolved.origin) from None
+        raise LLMProviderError(
+            detail, origin=resolved.origin, kind=_kind_of(exc), detail=detail
+        ) from None
 
 
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:

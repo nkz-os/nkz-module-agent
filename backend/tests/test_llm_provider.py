@@ -453,3 +453,114 @@ def test_estimate_cost_is_none_for_an_unknown_model():
     from app.llm.provider import estimate_cost
 
     assert estimate_cost("nonexistent/model-xyz", 10, 5) is None
+
+
+# --- failure kind + detail (panel "Test" button) ---------------------------
+
+SYNTH_KEY = "sk-synthetic-ABCDEFGHIJ-0123456789/+="
+
+
+def _lit_exc(name):
+    import litellm
+
+    import httpx
+
+    cls = getattr(litellm, name)
+    extra = {}
+    if name == "PermissionDeniedError":
+        extra["response"] = httpx.Response(
+            403, request=httpx.Request("POST", "https://llm.example.test")
+        )
+    return cls(message="boom", model="m", llm_provider="provider-a", **extra)
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("AuthenticationError", "auth_failed"),
+        ("PermissionDeniedError", "auth_failed"),
+        ("NotFoundError", "not_found"),
+        ("RateLimitError", "quota_or_rate_limit"),
+        ("BadRequestError", "bad_request"),
+        ("Timeout", "unreachable"),
+        ("APIConnectionError", "unreachable"),
+        ("InternalServerError", "provider_error"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_litellm_exception_maps_to_kind(monkeypatch, name, kind):
+    async def fake_acompletion(**kwargs):
+        raise _lit_exc(name)
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert exc_info.value.kind == kind
+
+
+@pytest.mark.asyncio
+async def test_non_litellm_exception_is_provider_error(monkeypatch):
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError("x")
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert exc_info.value.kind == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_detail_never_contains_the_key_in_any_form(monkeypatch):
+    import urllib.parse
+
+    key = SYNTH_KEY
+    quoted = urllib.parse.quote(key, safe="")
+    truncated = key[:-4]
+
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError(f"bad {key} / {quoted} / ...{truncated}... end")
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_API_KEY", key)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    detail = exc_info.value.detail
+    assert detail and "[redacted]" in detail
+    for form in (key, quoted, truncated):
+        assert form not in detail
+        assert form not in str(exc_info.value)
+
+
+def test_sanitize_strips_ansi_help_lines_and_collapses_whitespace():
+    from app.llm.provider import _sanitize
+
+    raw = (
+        "\x1b[92mlitellm.AuthenticationError:\x1b[0m   bad\n\n  key  here\n"
+        "Give Feedback / Get Help: https://example.test/issues\n"
+        "LiteLLM.Info: If you need to debug this error, use it."
+    )
+    out = _sanitize(raw, "")
+    assert "\x1b" not in out and "Give Feedback" not in out and "LiteLLM.Info" not in out
+    assert out == "litellm.AuthenticationError: bad key here"
+
+
+def test_sanitize_short_key_not_truncated_form():
+    from app.llm.provider import _sanitize
+
+    # keys shorter than 8 chars: only exact/quoted forms, no prefix redaction
+    assert _sanitize("abc abcde", "abcdef") == "abc abcde"
+
+
+@pytest.mark.asyncio
+async def test_detail_is_cut_to_300(monkeypatch):
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError("x" * 1000)
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert len(exc_info.value.detail) <= 300

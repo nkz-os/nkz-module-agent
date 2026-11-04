@@ -100,17 +100,40 @@ async def test_provider_error_is_sanitized_and_audited(client, monkeypatch):
     await client.put("/api/agent/llm-config", json=body())
     r = await client.post("/api/agent/llm-config/test")
     j = r.json()
-    assert j == {"ok": False, "error": "provider_error"} and KEY not in r.text
+    assert j["ok"] is False and j["error"] == "provider_error" and KEY not in r.text
+    assert KEY not in (j["detail"] or "")
     rows = await _audit()
     assert rows[0]["outcome"] == "error" and rows[0]["llm_origin"] == "tenant"
     assert KEY not in str(dict(rows[0]))
 
 
-async def test_error_is_a_fixed_code_even_with_other_provider_text(client, monkeypatch):
+async def test_failure_returns_code_and_sanitized_detail(client, monkeypatch):
     async def boom(**kw):
-        raise RuntimeError("upstream said: internal-host refused 10.0.0.1")
+        raise RuntimeError("upstream said: refused 10.0.0.1")
     monkeypatch.setattr("app.llm.provider.acompletion", boom)
     await client.put("/api/agent/llm-config", json=body())
     r = await client.post("/api/agent/llm-config/test")
-    assert r.json() == {"ok": False, "error": "provider_error"}
-    assert "internal-host" not in r.text
+    assert r.json() == {
+        "ok": False,
+        "error": "provider_error",
+        "detail": "upstream said: refused 10.0.0.1",
+    }
+    rows = await _audit()
+    assert "refused" not in str(dict(rows[0]))
+    assert rows[0]["channel"] == "panel" and rows[0]["reply_text"] == "[panel test]"
+
+
+async def test_failure_kind_is_returned(client, monkeypatch):
+    from app.llm.provider import LLMProviderError
+
+    async def boom(*a, **kw):
+        raise LLMProviderError("nope", origin="tenant", kind="auth_failed")
+    monkeypatch.setattr("app.llm.provider.complete", boom)
+    await client.put("/api/agent/llm-config", json=body())
+    r = await client.post("/api/agent/llm-config/test")
+    assert r.json() == {"ok": False, "error": "auth_failed", "detail": "nope"}
+
+
+async def test_unconfigured_has_null_detail(client):
+    r = await client.post("/api/agent/llm-config/test")
+    assert r.json() == {"ok": False, "error": "not_configured", "detail": None}
