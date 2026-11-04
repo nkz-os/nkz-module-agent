@@ -147,9 +147,28 @@ describe('LlmConfigPanel', () => {
     expect(keyInput.value).toBe('');
     expect(screen.getByText(en.llm.keyRequired)).toBeTruthy();
     // origin entry prefills and hints the endpoint
-    expect((screen.getByLabelText(new RegExp(en.llm.apiBase)) as HTMLInputElement).value).toBe(ORIGIN);
+    // the address is NOT prefilled: empty field, origin shown as a hint
+    expect((screen.getByLabelText(new RegExp(en.llm.apiBase)) as HTMLInputElement).value).toBe('');
+    expect(screen.getByText(en.llm.apiBaseHint.replace('{{origin}}', ORIGIN))).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(new RegExp(en.llm.apiBase)), {
+      target: { value: `${ORIGIN}/v1` },
+    });
     fireEvent.click(screen.getByText(en.llm.save));
     expect(await screen.findByText(en.llm.errors.key_required)).toBeTruthy();
+    expect(calls.some((c) => c.init?.method === 'PUT')).toBe(false);
+  });
+
+  it('blocks save with an empty address on an origin entry', async () => {
+    routes['GET /llm-config'] = () => json(200, base);
+    routes['GET /usage'] = () => json(200, usage);
+    render(<LlmConfigPanel />);
+    await screen.findByText(en.llm.save);
+    fireEvent.change(screen.getByLabelText(en.llm.provider), {
+      target: { value: `provider-b@${ORIGIN}` },
+    });
+    fireEvent.change(screen.getByLabelText(new RegExp(`^${en.llm.apiKey}`)), { target: { value: KEY } });
+    fireEvent.click(screen.getByText(en.llm.save));
+    expect(await screen.findByText(en.llm.errors.endpoint_not_allowed)).toBeTruthy();
     expect(calls.some((c) => c.init?.method === 'PUT')).toBe(false);
   });
 
@@ -248,6 +267,35 @@ describe('LlmConfigPanel fixes', () => {
     fireEvent.click(await screen.findByText(en.llm.test));
     expect(await screen.findByText(new RegExp(text))).toBeTruthy();
     expect(container.textContent).not.toContain(raw);
+  });
+
+  it.each(['auth_failed', 'not_found', 'quota_or_rate_limit', 'bad_request', 'unreachable'])(
+    'test failure code %s shows its text and the provider detail as plain text',
+    async (code) => {
+      routes['GET /llm-config'] = () => json(200, configured);
+      routes['GET /usage'] = () => json(200, usage);
+      const detail = 'upstream: <b>bad</b> model';
+      routes['POST /llm-config/test'] = () => json(200, { ok: false, error: code, detail });
+      const { container } = render(<LlmConfigPanel />);
+      fireEvent.click(await screen.findByText(en.llm.test));
+      expect(
+        await screen.findByText(new RegExp((en.llm.testErrors as Record<string, string>)[code].replace(/[()]/g, '\\$&'))),
+      ).toBeTruthy();
+      expect(container.textContent).toContain(en.llm.testDetail);
+      expect(container.textContent).toContain(detail);
+      expect(container.querySelector('b')).toBeNull();
+    },
+  );
+
+  it('shows no detail line when detail is null', async () => {
+    routes['GET /llm-config'] = () => json(200, configured);
+    routes['GET /usage'] = () => json(200, usage);
+    routes['POST /llm-config/test'] = () =>
+      json(200, { ok: false, error: 'not_configured', detail: null });
+    const { container } = render(<LlmConfigPanel />);
+    fireEvent.click(await screen.findByText(en.llm.test));
+    await screen.findByText(new RegExp(en.llm.testErrors.not_configured));
+    expect(container.textContent).not.toContain(en.llm.testDetail);
   });
 
   it('omits api_key when the key is empty and only model or budget change', async () => {

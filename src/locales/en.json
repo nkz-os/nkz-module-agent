@@ -55,9 +55,15 @@
     "testErrors": {
       "not_configured": "No provider is set up.",
       "provider_error": "The provider returned an error.",
-      "generic": "The test failed."
+      "generic": "The test failed.",
+      "auth_failed": "The provider rejected the key.",
+      "not_found": "Model or address not found.",
+      "quota_or_rate_limit": "No credit left or usage limit reached.",
+      "bad_request": "The provider rejected the request (check the model name).",
+      "unreachable": "Cannot connect to the provider."
     },
-    "noticeGeneric": "The assistant is not available with the current settings."
+    "noticeGeneric": "The assistant is not available with the current settings.",
+    "testDetail": "Provider response:"
   },
   "usage": {
     "title": "Usage this month",

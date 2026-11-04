@@ -24,9 +24,14 @@ nobody downstream has to know litellm exists:
 
 from __future__ import annotations
 
+import base64
 import logging
+import re
+import urllib.parse
 from dataclasses import dataclass
 
+import httpx
+import litellm
 from litellm import acompletion
 
 from app.config import get_settings
@@ -52,11 +57,22 @@ class LLMProviderError(Exception):
 
     The message is sanitized: the configured API key never appears in it.
     `origin` says whose provider failed (tenant/platform) for the audit.
+    `kind` is a fixed code for the failure class; `detail` is the sanitized,
+    length-capped provider text. Only the connection-test route may show
+    either to a person; agent turns never do.
     """
 
-    def __init__(self, message: str = "", origin: str | None = None):
+    def __init__(
+        self,
+        message: str = "",
+        origin: str | None = None,
+        kind: str = "provider_error",
+        detail: str | None = None,
+    ):
         super().__init__(message)
         self.origin = origin
+        self.kind = kind
+        self.detail = message if detail is None else detail
 
 
 @dataclass(frozen=True)
@@ -75,17 +91,116 @@ async def is_configured(tenant_id: str | None) -> bool:
     return (await resolve_provider(tenant_id)).origin != "none"
 
 
+_DETAIL_MAX = 300
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_NOISE_LINES = ("give feedback / get help", "litellm.info")
+
+
+_MIN_FRAGMENT = 8
+
+
+def _secret_forms(secret: str) -> list[tuple[str, int]]:
+    """(form, shortest fragment of it that counts as a leak) for one key."""
+    raw = secret.encode()
+    forms = {
+        secret,
+        urllib.parse.quote(secret, safe=""),
+        base64.b64encode(raw).decode(),
+        base64.urlsafe_b64encode(raw).decode(),
+        base64.b64encode(raw).decode().rstrip("="),
+        base64.urlsafe_b64encode(raw).decode().rstrip("="),
+    }
+    out = [(f, min(_MIN_FRAGMENT, len(f))) for f in forms if f]
+    if len(secret) >= _MIN_FRAGMENT:
+        out.append((secret[:-4], len(secret) - 4))
+    return out
+
+
+def _mark_leaks(text: str, forms: list[tuple[str, int]]) -> list[bool]:
+    """Flag every char of `text` inside a run that is a contiguous piece of
+    some form with at least its minimum length (longest-common-substring DP,
+    O(len(text) * len(form)))."""
+    flags = [False] * len(text)
+    for form, minlen in forms:
+        prev = [0] * (len(form) + 1)
+        for i, ch in enumerate(text):
+            cur = [0] * (len(form) + 1)
+            for k, fc in enumerate(form):
+                if ch == fc:
+                    run = prev[k] + 1
+                    cur[k + 1] = run
+                    if run >= minlen:
+                        for q in range(i - minlen + 1, i + 1):
+                            flags[q] = True
+            prev = cur
+    return flags
+
+
 def _sanitize(message: str, secret: str) -> str:
-    """Strip a configured secret out of a message before it can leak.
+    """Make a provider message safe to show: no key, no library noise.
 
     A provider's own error text can echo back the credential it just
-    rejected (some auth-failure responses do this, in whole or in part), so
-    scrubbing the literal secret value — not just avoiding logging it
-    ourselves — is what actually closes the leak.
+    rejected: whole, URL-quoted, base64, cut short at either end, or split
+    by a line break. ANSI codes, LiteLLM's "Give Feedback" / "LiteLLM.Info"
+    lines and whitespace runs are normalised first; then matching runs on the
+    text with whitespace ignored, and the redaction covers the original span.
     """
-    if not secret:
-        return message
-    return message.replace(secret, "[redacted]")
+    lines = [
+        ln for ln in _ANSI.sub("", message).splitlines()
+        if not any(n in ln.lower() for n in _NOISE_LINES)
+    ]
+    text = re.sub(r"\s+", " ", " ".join(lines)).strip()
+    if not secret or not text:
+        return text
+    kept = [i for i, ch in enumerate(text) if not ch.isspace()]
+    flags = _mark_leaks("".join(text[i] for i in kept), _secret_forms(secret))
+    hit = [False] * len(text)
+    for pos, f in zip(kept, flags):
+        hit[pos] = f
+    # Whitespace between two flagged chars belongs to a split key.
+    for i, ch in enumerate(text):
+        if ch.isspace() and 0 < i < len(text) - 1 and hit[i - 1] and hit[i + 1]:
+            hit[i] = True
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        if hit[i]:
+            if not out or out[-1] != "[redacted]":
+                out.append("[redacted]")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _is_connection_failure(exc: Exception) -> bool:
+    """LiteLLM reports a refused/failed connect as InternalServerError for
+    some providers; a genuine provider 500 must stay a provider error."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        if type(cur).__module__.startswith("aiohttp") and "Connect" in type(cur).__name__:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return "connection error" in str(exc).lower()
+
+
+def _kind_of(exc: Exception) -> str:
+    """Fixed failure code for an exception raised by the provider call."""
+    if isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)):
+        return "auth_failed"
+    if isinstance(exc, litellm.NotFoundError):
+        return "not_found"
+    if isinstance(exc, litellm.RateLimitError):
+        return "quota_or_rate_limit"
+    if isinstance(exc, litellm.BadRequestError):
+        return "bad_request"
+    if isinstance(exc, (litellm.Timeout, litellm.APIConnectionError)):
+        return "unreachable"
+    if isinstance(exc, litellm.InternalServerError) and _is_connection_failure(exc):
+        return "unreachable"
+    return "provider_error"
 
 
 async def complete(
@@ -140,7 +255,7 @@ async def complete(
             origin=resolved.origin,
         )
     except Exception as exc:
-        detail = _sanitize(str(exc), resolved.api_key)
+        detail = _sanitize(str(exc), resolved.api_key)[:_DETAIL_MAX]
         logger.error(
             "llm_completion_failed model=%s origin=%s error=%s",
             resolved.model,
@@ -149,7 +264,9 @@ async def complete(
         )
         # `from None`: suppress __context__ so nothing prints the original
         # (possibly unredacted) exception via traceback chaining.
-        raise LLMProviderError(detail, origin=resolved.origin) from None
+        raise LLMProviderError(
+            detail, origin=resolved.origin, kind=_kind_of(exc), detail=detail
+        ) from None
 
 
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:

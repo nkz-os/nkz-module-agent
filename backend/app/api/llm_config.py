@@ -174,6 +174,7 @@ async def test_llm_config(
     started = time.monotonic()
     ok = False
     error: str | None = None
+    detail: str | None = None
     outcome = "error"
     model: str | None = None
     origin: str | None = "none"
@@ -192,9 +193,11 @@ async def test_llm_config(
         error = exc.notice or "not_configured"
     except llm_provider.LLMProviderError as exc:
         origin = exc.origin or "none"
-        # Fixed code only: provider text may carry more than the tenant should
-        # see. The sanitized detail is already logged by the provider facade.
-        error = "provider_error"
+        # The TenantAdmin sees why the test failed: a fixed code plus the
+        # provider's message, already stripped of the key and capped. Neither
+        # goes to the audit row or to any chat reply.
+        error = exc.kind
+        detail = exc.detail
     except Exception:
         logger.exception("llm_config_test_failed tenant_id=%s", user.tenant_id)
         error = "provider_error"
@@ -211,7 +214,7 @@ async def test_llm_config(
     await record_turn(
         ctx, None, result, int((time.monotonic() - started) * 1000), trace_id
     )
-    return {"ok": True} if ok else {"ok": False, "error": error}
+    return {"ok": True} if ok else {"ok": False, "error": error, "detail": detail}
 
 
 def _cost(model: str | None, prompt: int, completion: int) -> float | None:

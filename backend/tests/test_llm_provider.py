@@ -453,3 +453,248 @@ def test_estimate_cost_is_none_for_an_unknown_model():
     from app.llm.provider import estimate_cost
 
     assert estimate_cost("nonexistent/model-xyz", 10, 5) is None
+
+
+# --- failure kind + detail (panel "Test" button) ---------------------------
+
+SYNTH_KEY = "sk-synthetic-ABCDEFGHIJ-0123456789/+="
+
+
+def _lit_exc(name):
+    import litellm
+
+    import httpx
+
+    cls = getattr(litellm, name)
+    extra = {}
+    if name == "PermissionDeniedError":
+        extra["response"] = httpx.Response(
+            403, request=httpx.Request("POST", "https://llm.example.test")
+        )
+    return cls(message="boom", model="m", llm_provider="provider-a", **extra)
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("AuthenticationError", "auth_failed"),
+        ("PermissionDeniedError", "auth_failed"),
+        ("NotFoundError", "not_found"),
+        ("RateLimitError", "quota_or_rate_limit"),
+        ("BadRequestError", "bad_request"),
+        ("Timeout", "unreachable"),
+        ("APIConnectionError", "unreachable"),
+        ("InternalServerError", "provider_error"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_litellm_exception_maps_to_kind(monkeypatch, name, kind):
+    async def fake_acompletion(**kwargs):
+        raise _lit_exc(name)
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert exc_info.value.kind == kind
+
+
+@pytest.mark.asyncio
+async def test_non_litellm_exception_is_provider_error(monkeypatch):
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError("x")
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert exc_info.value.kind == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_detail_never_contains_the_key_in_any_form(monkeypatch):
+    import urllib.parse
+
+    key = SYNTH_KEY
+    quoted = urllib.parse.quote(key, safe="")
+    truncated = key[:-4]
+
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError(f"bad {key} / {quoted} / ...{truncated}... end")
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_API_KEY", key)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    detail = exc_info.value.detail
+    assert detail and "[redacted]" in detail
+    for form in (key, quoted, truncated):
+        assert form not in detail
+        assert form not in str(exc_info.value)
+
+
+def test_sanitize_strips_ansi_help_lines_and_collapses_whitespace():
+    from app.llm.provider import _sanitize
+
+    raw = (
+        "\x1b[92mlitellm.AuthenticationError:\x1b[0m   bad\n\n  key  here\n"
+        "Give Feedback / Get Help: https://example.test/issues\n"
+        "LiteLLM.Info: If you need to debug this error, use it."
+    )
+    out = _sanitize(raw, "")
+    assert "\x1b" not in out and "Give Feedback" not in out and "LiteLLM.Info" not in out
+    assert out == "litellm.AuthenticationError: bad key here"
+
+
+def test_sanitize_short_key_not_truncated_form():
+    from app.llm.provider import _sanitize
+
+    # keys shorter than 8 chars: only exact/quoted forms, no prefix redaction
+    assert _sanitize("abc abcde", "abcdef") == "abc abcde"
+
+
+@pytest.mark.asyncio
+async def test_detail_is_cut_to_300(monkeypatch):
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError("x" * 1000)
+
+    _configure_with_key(monkeypatch)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert len(exc_info.value.detail) <= 300
+
+
+@pytest.mark.asyncio
+async def test_tools_call_reaches_the_network_layer_unmocked(monkeypatch):
+    """NOT mocked: litellm imports `mcp` when tools are passed, and `mcp` is
+    not a declared litellm dependency. A missing install surfaces as an
+    APIConnectionError mentioning the module instead of a real connection
+    failure. Port 9 (discard) on loopback refuses the connection."""
+    import litellm
+
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "noop",
+                "description": "x",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with pytest.raises(Exception) as exc_info:
+        await litellm.acompletion(
+            model="openai/x",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=tools,
+            api_base="http://127.0.0.1:9/v1",
+            api_key="sk-synthetic-regression-0000",
+            timeout=3,
+            num_retries=0,
+        )
+    text = str(exc_info.value)
+    assert "No module named" not in text
+    # A real refused connection (litellm may classify it as a connection,
+    # timeout or server error depending on version).
+    assert isinstance(
+        exc_info.value,
+        litellm.APIConnectionError | litellm.Timeout | litellm.InternalServerError,
+    ) and "onnection" in text
+
+
+# --- more key forms --------------------------------------------------------
+
+LONG_KEY = "sk-synthetic-Qw3rTy9uIoPaSdFgHj/KlZx+Cv=1234"
+
+
+def _forms(key):
+    import base64
+    import urllib.parse
+
+    b = key.encode()
+    return {
+        "plain": key,
+        "quoted": urllib.parse.quote(key, safe=""),
+        "split_newline": key[:20] + "\n" + key[20:],
+        "split_spaces": key[:20] + "  \r\n  " + key[20:],
+        "b64": base64.b64encode(b).decode(),
+        "b64_nopad": base64.b64encode(b).decode().rstrip("="),
+        "b64url": base64.urlsafe_b64encode(b).decode(),
+        "b64url_nopad": base64.urlsafe_b64encode(b).decode().rstrip("="),
+        "prefix_cut": key[:-4],
+        "head_cut": key[4:],
+        "tail_cut": key[:-9],
+        "middle": key[6:-6],
+    }
+
+
+def _survivors(key, detail, n=8):
+    squashed = "".join(detail.split())
+    return [key[i : i + n] for i in range(len(key) - n + 1) if key[i : i + n] in squashed]
+
+
+@pytest.mark.parametrize("form", list(_forms(LONG_KEY)))
+def test_sanitize_redacts_every_key_form(form):
+    from app.llm.provider import _sanitize
+
+    echoed = _forms(LONG_KEY)[form]
+    out = _sanitize(f"auth failed for {echoed} (retry)", LONG_KEY)
+    assert "[redacted]" in out
+    assert _survivors(LONG_KEY, out) == []
+    assert out.startswith("auth failed for ") and out.endswith("(retry)")
+
+
+def test_sanitize_keeps_unrelated_text():
+    from app.llm.provider import _sanitize
+
+    assert _sanitize("model not found: gpt-nope", LONG_KEY) == "model not found: gpt-nope"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["split_newline", "b64", "head_cut"])
+async def test_complete_detail_has_no_key_fragment(monkeypatch, form):
+    echoed = _forms(LONG_KEY)[form]
+
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError(f"rejected {echoed}")
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_API_KEY", LONG_KEY)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert _survivors(LONG_KEY, exc_info.value.detail) == []
+    assert _survivors(LONG_KEY, str(exc_info.value)) == []
+
+
+@pytest.mark.asyncio
+async def test_internal_server_error_kind_depends_on_cause(monkeypatch):
+    import httpx
+    import litellm
+
+    def make(msg, cause=None):
+        e = litellm.InternalServerError(message=msg, model="m", llm_provider="provider-a")
+        e.__cause__ = cause
+        return e
+
+    cases = [
+        (make("boom"), "provider_error"),
+        (make("upstream exploded"), "provider_error"),
+        (make("OpenAIException - Connection error."), "unreachable"),
+        (make("x", httpx.ConnectError("refused")), "unreachable"),
+    ]
+    _configure_with_key(monkeypatch)
+    for exc, kind in cases:
+        async def fake_acompletion(**kwargs):
+            raise exc
+
+        monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+        with pytest.raises(LLMProviderError) as ei:
+            await complete([{"role": "user", "content": "hola"}])
+        assert ei.value.kind == kind, str(exc)
