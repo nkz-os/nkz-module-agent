@@ -567,13 +567,17 @@ async def test_detail_is_cut_to_300(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tools_call_reaches_the_network_layer_unmocked():
+async def test_tools_call_reaches_the_network_layer_unmocked(monkeypatch):
     """NOT mocked: litellm imports `mcp` when tools are passed, and `mcp` is
     not a declared litellm dependency. A missing install surfaces as an
     APIConnectionError mentioning the module instead of a real connection
     failure. Port 9 (discard) on loopback refuses the connection."""
     import litellm
 
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     tools = [
         {
             "type": "function",
@@ -602,3 +606,95 @@ async def test_tools_call_reaches_the_network_layer_unmocked():
         exc_info.value,
         litellm.APIConnectionError | litellm.Timeout | litellm.InternalServerError,
     ) and "onnection" in text
+
+
+# --- more key forms --------------------------------------------------------
+
+LONG_KEY = "sk-synthetic-Qw3rTy9uIoPaSdFgHj/KlZx+Cv=1234"
+
+
+def _forms(key):
+    import base64
+    import urllib.parse
+
+    b = key.encode()
+    return {
+        "plain": key,
+        "quoted": urllib.parse.quote(key, safe=""),
+        "split_newline": key[:20] + "\n" + key[20:],
+        "split_spaces": key[:20] + "  \r\n  " + key[20:],
+        "b64": base64.b64encode(b).decode(),
+        "b64_nopad": base64.b64encode(b).decode().rstrip("="),
+        "b64url": base64.urlsafe_b64encode(b).decode(),
+        "b64url_nopad": base64.urlsafe_b64encode(b).decode().rstrip("="),
+        "prefix_cut": key[:-4],
+        "head_cut": key[4:],
+        "tail_cut": key[:-9],
+        "middle": key[6:-6],
+    }
+
+
+def _survivors(key, detail, n=8):
+    squashed = "".join(detail.split())
+    return [key[i : i + n] for i in range(len(key) - n + 1) if key[i : i + n] in squashed]
+
+
+@pytest.mark.parametrize("form", list(_forms(LONG_KEY)))
+def test_sanitize_redacts_every_key_form(form):
+    from app.llm.provider import _sanitize
+
+    echoed = _forms(LONG_KEY)[form]
+    out = _sanitize(f"auth failed for {echoed} (retry)", LONG_KEY)
+    assert "[redacted]" in out
+    assert _survivors(LONG_KEY, out) == []
+    assert out.startswith("auth failed for ") and out.endswith("(retry)")
+
+
+def test_sanitize_keeps_unrelated_text():
+    from app.llm.provider import _sanitize
+
+    assert _sanitize("model not found: gpt-nope", LONG_KEY) == "model not found: gpt-nope"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["split_newline", "b64", "head_cut"])
+async def test_complete_detail_has_no_key_fragment(monkeypatch, form):
+    echoed = _forms(LONG_KEY)[form]
+
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError(f"rejected {echoed}")
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_API_KEY", LONG_KEY)
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+    with pytest.raises(LLMProviderError) as exc_info:
+        await complete([{"role": "user", "content": "hola"}])
+    assert _survivors(LONG_KEY, exc_info.value.detail) == []
+    assert _survivors(LONG_KEY, str(exc_info.value)) == []
+
+
+@pytest.mark.asyncio
+async def test_internal_server_error_kind_depends_on_cause(monkeypatch):
+    import httpx
+    import litellm
+
+    def make(msg, cause=None):
+        e = litellm.InternalServerError(message=msg, model="m", llm_provider="provider-a")
+        e.__cause__ = cause
+        return e
+
+    cases = [
+        (make("boom"), "provider_error"),
+        (make("upstream exploded"), "provider_error"),
+        (make("OpenAIException - Connection error."), "unreachable"),
+        (make("x", httpx.ConnectError("refused")), "unreachable"),
+    ]
+    _configure_with_key(monkeypatch)
+    for exc, kind in cases:
+        async def fake_acompletion(**kwargs):
+            raise exc
+
+        monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+        with pytest.raises(LLMProviderError) as ei:
+            await complete([{"role": "user", "content": "hola"}])
+        assert ei.value.kind == kind, str(exc)

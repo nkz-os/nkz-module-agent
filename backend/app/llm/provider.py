@@ -24,11 +24,13 @@ nobody downstream has to know litellm exists:
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
 
+import httpx
 import litellm
 from litellm import acompletion
 
@@ -94,26 +96,94 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _NOISE_LINES = ("give feedback / get help", "litellm.info")
 
 
+_MIN_FRAGMENT = 8
+
+
+def _secret_forms(secret: str) -> list[tuple[str, int]]:
+    """(form, shortest fragment of it that counts as a leak) for one key."""
+    raw = secret.encode()
+    forms = {
+        secret,
+        urllib.parse.quote(secret, safe=""),
+        base64.b64encode(raw).decode(),
+        base64.urlsafe_b64encode(raw).decode(),
+        base64.b64encode(raw).decode().rstrip("="),
+        base64.urlsafe_b64encode(raw).decode().rstrip("="),
+    }
+    out = [(f, min(_MIN_FRAGMENT, len(f))) for f in forms if f]
+    if len(secret) >= _MIN_FRAGMENT:
+        out.append((secret[:-4], len(secret) - 4))
+    return out
+
+
+def _mark_leaks(text: str, forms: list[tuple[str, int]]) -> list[bool]:
+    """Flag every char of `text` inside a run that is a contiguous piece of
+    some form with at least its minimum length (longest-common-substring DP,
+    O(len(text) * len(form)))."""
+    flags = [False] * len(text)
+    for form, minlen in forms:
+        prev = [0] * (len(form) + 1)
+        for i, ch in enumerate(text):
+            cur = [0] * (len(form) + 1)
+            for k, fc in enumerate(form):
+                if ch == fc:
+                    run = prev[k] + 1
+                    cur[k + 1] = run
+                    if run >= minlen:
+                        for q in range(i - minlen + 1, i + 1):
+                            flags[q] = True
+            prev = cur
+    return flags
+
+
 def _sanitize(message: str, secret: str) -> str:
     """Make a provider message safe to show: no key, no library noise.
 
     A provider's own error text can echo back the credential it just
-    rejected (whole, URL-quoted, or cut short), so every form is scrubbed —
-    not just avoiding logging it ourselves. ANSI colour codes and LiteLLM's
-    "Give Feedback" / "LiteLLM.Info" lines are removed, whitespace collapsed.
+    rejected: whole, URL-quoted, base64, cut short at either end, or split
+    by a line break. ANSI codes, LiteLLM's "Give Feedback" / "LiteLLM.Info"
+    lines and whitespace runs are normalised first; then matching runs on the
+    text with whitespace ignored, and the redaction covers the original span.
     """
-    text = _ANSI.sub("", message)
-    if secret:
-        forms = [secret, urllib.parse.quote(secret, safe="")]
-        if len(secret) >= 8:
-            forms.append(secret[:-4])
-        for form in forms:
-            text = text.replace(form, "[redacted]")
     lines = [
-        ln for ln in text.splitlines()
+        ln for ln in _ANSI.sub("", message).splitlines()
         if not any(n in ln.lower() for n in _NOISE_LINES)
     ]
-    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+    text = re.sub(r"\s+", " ", " ".join(lines)).strip()
+    if not secret or not text:
+        return text
+    kept = [i for i, ch in enumerate(text) if not ch.isspace()]
+    flags = _mark_leaks("".join(text[i] for i in kept), _secret_forms(secret))
+    hit = [False] * len(text)
+    for pos, f in zip(kept, flags):
+        hit[pos] = f
+    # Whitespace between two flagged chars belongs to a split key.
+    for i, ch in enumerate(text):
+        if ch.isspace() and 0 < i < len(text) - 1 and hit[i - 1] and hit[i + 1]:
+            hit[i] = True
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        if hit[i]:
+            if not out or out[-1] != "[redacted]":
+                out.append("[redacted]")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _is_connection_failure(exc: Exception) -> bool:
+    """LiteLLM reports a refused/failed connect as InternalServerError for
+    some providers; a genuine provider 500 must stay a provider error."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        if type(cur).__module__.startswith("aiohttp") and "Connect" in type(cur).__name__:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return "connection error" in str(exc).lower()
 
 
 def _kind_of(exc: Exception) -> str:
@@ -127,6 +197,8 @@ def _kind_of(exc: Exception) -> str:
     if isinstance(exc, litellm.BadRequestError):
         return "bad_request"
     if isinstance(exc, (litellm.Timeout, litellm.APIConnectionError)):
+        return "unreachable"
+    if isinstance(exc, litellm.InternalServerError) and _is_connection_failure(exc):
         return "unreachable"
     return "provider_error"
 

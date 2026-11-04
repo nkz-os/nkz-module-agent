@@ -27,7 +27,7 @@ asyncpg>=0.29.0
 litellm>=1.102.1
 
 # Needed by litellm when tools are passed (it imports mcp but does not declare it).
-mcp>=2.3.0
+mcp>=2.3.0,<3
 
 # Fernet/MultiFernet for the per-tenant LLM keys stored at rest
 # (app/llm/keys.py). Apache-2.0/BSD, AGPL-compatible.

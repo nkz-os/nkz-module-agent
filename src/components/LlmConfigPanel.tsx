@@ -329,7 +329,7 @@ export function LlmConfigPanel() {
                 )}
               </p>
               {testResult.detail && (
-                <p className="text-nkz-text-muted text-nkz-sm break-words">
+                <p className="text-nkz-text-muted text-nkz-sm break-all">
                   {t('llm.testDetail')} {testResult.detail}
                 </p>
               )}
