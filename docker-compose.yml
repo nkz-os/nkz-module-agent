@@ -52,6 +52,7 @@ services:
       # tool. HMAC_SECRET signs module -> core calls (dev-only value here).
       - TIMESERIES_URL=
       - WEATHER_MAP_URL=
+      - WEATHER_API_URL=
       - BIOORCH_API_URL=
       - CUE_API_URL=
       - HMAC_SECRET=dev-only-hmac-change-me

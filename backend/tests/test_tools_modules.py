@@ -156,7 +156,7 @@ class _AlertOrionClient:
 
     async def query_entities(self, **kwargs):
         self.calls.append(kwargs)
-        return self.entities
+        return self.entities if kwargs.get("offset", 0) == 0 else []
 
     async def close(self):
         pass
@@ -171,7 +171,9 @@ async def test_get_active_alerts_freezes_surface_scopes_and_filters(monkeypatch)
 
     assert result.ok is True
     assert client.tenant_id == "tenant_a"
-    assert client.calls == [{"type": "Alert", "limit": 50}]
+    assert client.calls == [
+        {"type": "Alert", "q": 'status=="active"', "limit": 50, "offset": 0}
+    ]
 
     # Mutation (a): the resolved Alert must be filtered out here. Drop the
     # status == "active" filter and payload grows to two alerts (this goes red).
@@ -767,7 +769,12 @@ async def test_module_tools_filtered_out_when_tenant_has_no_installs(db_pool):
     tools = await registry.tools_for("tenant_no_module_rows")
 
     names = {t.name for t in tools}
-    assert names == {"get_parcels", "get_parcel_snapshot", "get_timeseries"}
+    assert names == {
+        "get_parcels",
+        "get_parcel_snapshot",
+        "get_timeseries",
+        "get_parcel_daily_weather",
+    }
     assert "get_active_alerts" not in names
     assert "get_weather_conditions" not in names
     assert "get_crop_trial_evidence" not in names
@@ -846,3 +853,56 @@ async def test_empty_alert_list_is_ok_empty(monkeypatch):
     result = await orion.get_active_alerts(_ctx(), orion.GetActiveAlertsArgs())
     assert result.ok is True
     assert result.payload == []
+
+
+# --- get_active_alerts: server-side status filter and paging ------------------
+
+
+class _PagedAlertClient:
+    """Fake Orion honouring q, limit and offset over 60 resolved + 3 active."""
+
+    def __init__(self, tenant_id):
+        self.calls = []
+        self.store = [
+            {"id": f"urn:ngsi-ld:Alert:r{i}", "type": "Alert",
+             "status": {"type": "Property", "value": "resolved"}}
+            for i in range(60)
+        ] + [
+            {"id": f"urn:ngsi-ld:Alert:a{i}", "type": "Alert",
+             "status": {"type": "Property", "value": "active"}}
+            for i in range(3)
+        ]
+
+    async def query_entities(self, type=None, q=None, limit=100, offset=0, **kw):
+        self.calls.append({"type": type, "q": q, "limit": limit, "offset": offset})
+        rows = self.store
+        if q == 'status=="active"':
+            rows = [e for e in rows if e["status"]["value"] == "active"]
+        return rows[offset : offset + limit]
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_get_active_alerts_counts_active_beyond_first_page(monkeypatch):
+    client = _PagedAlertClient("tenant_a")
+    monkeypatch.setattr(orion, "OrionClient", lambda tenant_id: client)
+    result = await orion.get_active_alerts(_ctx(), orion.GetActiveAlertsArgs())
+    assert result.ok is True
+    assert len(result.payload) == 3
+    assert all(c["q"] == 'status=="active"' for c in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_get_active_alerts_pages_when_a_page_is_full(monkeypatch):
+    client = _PagedAlertClient("tenant_a")
+    client.store = [
+        {"id": f"urn:ngsi-ld:Alert:a{i}", "type": "Alert",
+         "status": {"type": "Property", "value": "active"}}
+        for i in range(120)
+    ]
+    monkeypatch.setattr(orion, "OrionClient", lambda tenant_id: client)
+    result = await orion.get_active_alerts(_ctx(), orion.GetActiveAlertsArgs())
+    assert len(result.payload) == 120
+    assert [c["offset"] for c in client.calls] == [0, 50, 100]

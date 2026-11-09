@@ -39,7 +39,12 @@ FAKE_MODULE_TOOL = ToolDefinition(
     required_module="fake_module",
 )
 
-CORE_NAMES = {"get_parcels", "get_parcel_snapshot", "get_timeseries"}
+CORE_NAMES = {
+    "get_parcels",
+    "get_parcel_snapshot",
+    "get_timeseries",
+    "get_parcel_daily_weather",
+}
 
 
 def _patch_catalog(monkeypatch):
@@ -171,6 +176,7 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
     [
         ("TIMESERIES_URL", "get_timeseries", None),
         ("WEATHER_MAP_URL", "get_weather_conditions", "weather-map"),
+        ("WEATHER_API_URL", "get_parcel_daily_weather", None),
         ("BIOORCH_API_URL", "get_crop_trial_evidence", "bioorchestrator"),
         ("CUE_API_URL", "check_substance_authorization", "cue"),
     ],
@@ -201,4 +207,8 @@ async def test_fail_open_subset_is_core_intersect_configured(db_pool, monkeypatc
     get_settings.cache_clear()
     registry.clear_cache()
     names = {t.name for t in await registry.tools_for("tenant_x")}
-    assert names == {"get_parcels", "get_parcel_snapshot"}
+    assert names == {
+        "get_parcels",
+        "get_parcel_snapshot",
+        "get_parcel_daily_weather",
+    }

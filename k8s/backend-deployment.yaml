@@ -125,6 +125,8 @@ spec:
               value: ""
             - name: WEATHER_MAP_URL
               value: ""
+            - name: WEATHER_API_URL
+              value: ""
             - name: BIOORCH_API_URL
               value: ""
             - name: CUE_API_URL
