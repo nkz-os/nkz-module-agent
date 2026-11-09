@@ -68,6 +68,10 @@ class AlertSummary(BaseModel):
     refEntity: str | None
 
 
+_ALERT_PAGE_SIZE = 50
+_ALERT_MAX_PAGES = 20
+
+
 class GetParcelsArgs(BaseModel):
     """get_parcels takes no arguments."""
 
@@ -273,7 +277,20 @@ async def get_active_alerts(
 ) -> ToolResult:
     client = OrionClient(ctx.tenant_id)
     try:
-        entities = await client.query_entities(type="Alert", limit=50)
+        # Filter server-side so closed alerts never crowd out active ones,
+        # then page: a full page may have a successor. The in-code filter
+        # stays as a second guard.
+        entities: list[dict] = []
+        for page in range(_ALERT_MAX_PAGES):
+            batch = await client.query_entities(
+                type="Alert",
+                q='status=="active"',
+                limit=_ALERT_PAGE_SIZE,
+                offset=page * _ALERT_PAGE_SIZE,
+            )
+            entities.extend(batch)
+            if len(batch) < _ALERT_PAGE_SIZE:
+                break
         alerts = [
             a
             for a in (_alert_summary(e) for e in entities)
@@ -296,7 +313,7 @@ async def get_active_alerts(
             Citation(
                 source="orion:Alert",
                 retrieved_at=_now(),
-                detail="type=Alert limit=50",
+                detail='type=Alert q=status=="active"',
             ),
         ),
     )
@@ -346,7 +363,7 @@ GET_ACTIVE_ALERTS = ToolDefinition(
     name="get_active_alerts",
     description=(
         "List the current tenant's active Alert entities (id, category, "
-        "alertType, severity, status, observedAt, refEntity), up to 50."
+        "alertType, severity, status, observedAt, refEntity)."
     ),
     args_model=GetActiveAlertsArgs,
     handler=get_active_alerts,

@@ -21,7 +21,7 @@ def _body(out: str) -> str:
 @pytest.mark.asyncio
 async def test_registry_exposes_core_tools_in_this_phase():
     """A tenant with no installed modules still gets the three core tools."""
-    assert len(await registry.tool_specs("tenant_prompt")) == 3
+    assert len(await registry.tool_specs("tenant_prompt")) == 4
     assert await registry.has_tools("tenant_prompt") is True
 
 

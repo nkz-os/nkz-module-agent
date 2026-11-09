@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # Module-backed read tools. Each URL points at an installed module; empty
     # by default so a missing module never points at someone else's deployment.
     weather_map_url: str = ""
+    weather_api_url: str = ""
     bioorch_api_url: str = ""
     cue_api_url: str = ""
 

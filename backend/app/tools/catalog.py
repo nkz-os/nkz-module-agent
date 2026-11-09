@@ -94,6 +94,7 @@ def available_tools() -> tuple[ToolDefinition, ...]:
         timeseries.GET_TIMESERIES,
         orion.GET_ACTIVE_ALERTS,
         weather.GET_WEATHER_CONDITIONS,
+        weather.GET_PARCEL_DAILY_WEATHER,
         bioorch.GET_CROP_TRIAL_EVIDENCE,
         cue.CHECK_SUBSTANCE_AUTHORIZATION,
     )
