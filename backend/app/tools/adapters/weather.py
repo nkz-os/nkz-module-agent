@@ -176,9 +176,15 @@ _DAY_KEYS = (
     "precip_mm",
     "et0_mm",
     "hours_below_zero",
-    "tmin_coldest_c",
     "source",
     "sources",
+)
+# Only the nights not yet closed carry the frost-warning value, under a key
+# that cannot be mistaken for the expected minimum.
+_FROST_KINDS = ("running", "forecast")
+_FROST_NOTE = (
+    "frost_warning_min_c is the colder of two models and is used for frost "
+    "warnings; it is not the expected minimum (tmin_c is)."
 )
 _PASS_THROUGH = (
     "local_today",
@@ -207,19 +213,35 @@ def _local_hour(local_now: Any) -> int | None:
         return None
 
 
-def _last_night(days: list[dict], local_now: Any) -> dict | None:
-    """Last night's minimum: the running day's tmin from 10:00 local, else the
-    latest closed day. None when the local hour is unknown or no day fits."""
+def _last_night(days: list[dict], local_now: Any) -> tuple[dict | None, str | None]:
+    """Last night's minimum and a note when it is not the running night.
+
+    From 10:00 local the running day's tmin_c; before that, or when the local
+    hour or the running day is unavailable, the latest closed day, labelled as
+    that closed day. Returns (None, note) when nothing fits.
+    """
     hour = _local_hour(local_now)
-    if hour is None:
-        return None
-    wanted = "running" if hour >= _LAST_NIGHT_FROM_HOUR else "closed"
-    candidates = [d for d in days if d.get("kind") == wanted]
-    if not candidates:
-        return None
-    day = max(candidates, key=lambda d: d["date"])
-    if day.get("tmin_c") is None:
-        return None
+    if hour is not None and hour >= _LAST_NIGHT_FROM_HOUR:
+        running = [d for d in days if d.get("kind") == "running"]
+        if running:
+            day = max(running, key=lambda d: d["date"])
+            if day.get("tmin_c") is not None:
+                return _night(day), None
+    closed = [
+        d for d in days if d.get("kind") == "closed" and d.get("tmin_c") is not None
+    ]
+    if not closed:
+        return None, "no closed day with a minimum is available"
+    day = max(closed, key=lambda d: d["date"])
+    note = (
+        f"closed day {day['date']}; the running night is not available"
+        if hour is None or hour >= _LAST_NIGHT_FROM_HOUR
+        else f"closed day {day['date']}; the running day has not reached its minimum yet"
+    )
+    return _night(day), note
+
+
+def _night(day: dict) -> dict:
     return {
         k: day[k] for k in ("date", "kind", "tmin_c", "source", "sources") if k in day
     }
@@ -255,7 +277,7 @@ async def get_parcel_daily_weather(
         "start": (end - timedelta(days=args.past_days)).isoformat(),
         "end": end.isoformat(),
         "fill": "open_meteo",
-        "forecast_days": args.forecast_days,
+        "forecast_days": max(1, args.forecast_days),
     }
 
     try:
@@ -286,26 +308,30 @@ async def get_parcel_daily_weather(
 
     local_today = body.get("local_today")
     has_local_today = isinstance(local_today, str) and bool(local_today)
-    days = [
-        {k: d[k] for k in _DAY_KEYS if k in d}
-        for d in raw_days
-        if has_local_today or d.get("kind") != "forecast"
-    ]
+    keep_forecast = args.forecast_days > 0 and has_local_today
+    days = []
+    for d in raw_days:
+        if d.get("kind") == "forecast" and not keep_forecast:
+            continue
+        out = {k: d[k] for k in _DAY_KEYS if k in d}
+        if d.get("kind") in _FROST_KINDS and d.get("tmin_coldest_c") is not None:
+            out["frost_warning_min_c"] = d["tmin_coldest_c"]
+        days.append(out)
     payload: dict[str, Any] = {k: body[k] for k in _PASS_THROUGH if k in body}
     payload["days"] = days
-    if not has_local_today:
+    if any("frost_warning_min_c" in d for d in days):
+        payload["field_notes"] = _FROST_NOTE
+    if args.forecast_days > 0 and not has_local_today:
         # Without the parcel's local date a forecast day cannot be placed;
         # never guess it.
         payload["forecast_unavailable"] = (
             "the parcel's local date is unknown, so forecast days are withheld"
         )
-    last_night = _last_night(days, body.get("local_now"))
+    last_night, note = _last_night(days, body.get("local_now"))
     if last_night is not None:
         payload["last_night"] = last_night
-    elif _local_hour(body.get("local_now")) is None:
-        payload["last_night_unavailable"] = (
-            "the parcel's local time is unknown, so last night cannot be chosen"
-        )
+    if note:
+        payload["last_night_note"] = note
 
     return ToolResult(
         ok=True,
@@ -344,14 +370,15 @@ GET_PARCEL_DAILY_WEATHER = ToolDefinition(
     name="get_parcel_daily_weather",
     description=(
         "Read the daily weather series of one parcel: past days, today and "
-        "forecast days (past_days up to 30, forecast_days up to 15). Each day "
+        "forecast days (past_days up to 30, forecast_days up to 15, 0 for none). Each day "
         "has date, kind (closed, running or forecast), tmin_c, tmax_c, "
         "precip_mm, et0_mm, hours_below_zero, source and per-variable "
         "sources. All values are model estimates unless the source is "
         "iot_sensor, which is measured; say so. Always state the source and "
         "the date of each figure. 'Last night' is the running day's tmin_c "
         "from 10:00 local time, otherwise the latest closed day: use the "
-        "last_night field. tmin_coldest_c is the colder of two models, a "
+        "last_night field and its last_night_note. frost_warning_min_c "
+        "(running and forecast days only) is the colder of two models, a "
         "frost-warning value; never present it as the expected minimum. If "
         "forecast_unavailable or missing_days is present, say the data is "
         "missing rather than estimating it."

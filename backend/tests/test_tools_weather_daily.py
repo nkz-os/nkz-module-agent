@@ -125,7 +125,10 @@ async def test_daily_tool_signs_and_returns_kind_source_and_date(monkeypatch):
     assert c["url"] == f"http://weather-api.invalid/api/weather/parcel/{PARCEL}/daily"
     assert c["headers"]["X-Tenant-ID"] == "tenant_x"
     assert c["headers"]["X-User-ID"] == "user_a"
-    assert c["headers"]["X-Auth-Signature"]
+    from nkz_platform_sdk.crypto import generate_hmac_signature
+    assert c["headers"]["X-Auth-Signature"] == generate_hmac_signature(
+        "test-secret", "", "tenant_x"
+    )
     assert c["params"]["fill"] == "open_meteo"
     assert c["params"]["forecast_days"] == 2
     assert set(c["params"]) == {"start", "end", "fill", "forecast_days"}
@@ -133,7 +136,11 @@ async def test_daily_tool_signs_and_returns_kind_source_and_date(monkeypatch):
     days = {d["date"]: d for d in result.payload["days"]}
     assert days["2026-11-10"]["kind"] == "forecast"
     assert days["2026-11-10"]["source"] == "open_meteo"
-    assert days["2026-11-10"]["tmin_coldest_c"] == -1.5
+    assert days["2026-11-10"]["frost_warning_min_c"] == -1.5
+    assert days["2026-11-09"]["frost_warning_min_c"] == -0.5
+    assert "frost_warning_min_c" not in days["2026-11-07"]
+    assert all("tmin_coldest_c" not in d for d in result.payload["days"])
+    assert "not the expected minimum" in result.payload["field_notes"]
     assert days["2026-11-08"]["sources"]["tmin_c"] == "iot_sensor"
     assert result.payload["forecast_issued_at"] == "2026-11-09T04:00:00Z"
     assert result.payload["totals"] == {"precip_mm": 3.0}
@@ -163,13 +170,44 @@ async def test_daily_last_night_before_ten_is_latest_closed_day(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_daily_without_local_now_gives_no_last_night(monkeypatch):
+async def test_daily_without_local_now_uses_latest_closed_day(monkeypatch):
     body = {k: v for k, v in DAILY_BODY.items() if k != "local_now"}
     _install(monkeypatch, body)
     result = await _call()
     assert result.ok is True
+    ln = result.payload["last_night"]
+    assert (ln["date"], ln["kind"], ln["tmin_c"]) == ("2026-11-08", "closed", 2.5)
+    note = result.payload["last_night_note"]
+    assert "closed day 2026-11-08" in note
+    assert "running night is not available" in note
+
+
+@pytest.mark.asyncio
+async def test_daily_without_local_now_or_closed_days_has_no_last_night(monkeypatch):
+    body = {k: v for k, v in DAILY_BODY.items() if k != "local_now"}
+    body["days"] = [d for d in DAILY_BODY["days"] if d["kind"] != "closed"]
+    _install(monkeypatch, body)
+    result = await _call()
     assert "last_night" not in result.payload
-    assert result.payload["last_night_unavailable"]
+    assert result.payload["last_night_note"]
+
+
+@pytest.mark.asyncio
+async def test_daily_zero_forecast_days_still_requests_one_and_drops_forecast(monkeypatch):
+    box = _install(monkeypatch, DAILY_BODY)
+    result = await _call(forecast_days=0)
+    assert box["client"].captured["params"]["forecast_days"] == 1
+    assert all(d["kind"] != "forecast" for d in result.payload["days"])
+    assert "forecast_unavailable" not in result.payload
+    assert result.payload["last_night"]["kind"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_daily_zero_forecast_days_without_local_today_is_not_flagged(monkeypatch):
+    body = {k: v for k, v in DAILY_BODY.items() if k not in ("local_today", "local_now")}
+    _install(monkeypatch, body)
+    result = await _call(forecast_days=0)
+    assert "forecast_unavailable" not in result.payload
 
 
 @pytest.mark.asyncio
@@ -227,7 +265,7 @@ def test_daily_tool_description_states_model_vs_measured_and_source():
     assert "model" in d
     assert "source" in d and "date" in d
     assert "10:00" in d
-    assert "tmin_coldest_c" in d
+    assert "frost_warning_min_c" in d
 
 
 def test_conditions_tool_description_says_snapshot_not_measured():
@@ -265,3 +303,16 @@ async def test_conditions_payload_without_kind_has_neither_key(monkeypatch):
         _ctx(), weather.GetWeatherConditionsArgs(parcel_id=PARCEL)
     )
     assert "kind" not in result.payload and "valid_date" not in result.payload
+
+
+@pytest.mark.asyncio
+async def test_daily_http_error_is_unavailable_without_detail(monkeypatch):
+    err = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("GET", "http://weather-api.invalid/x"),
+        response=httpx.Response(500, request=httpx.Request("GET", "http://x.invalid")),
+    )
+    _install(monkeypatch, exc=err)
+    result = await _call()
+    assert result.ok is False
+    assert result.unavailable_reason == "daily weather unreachable"
