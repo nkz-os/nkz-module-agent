@@ -23,6 +23,7 @@ def test_available_tools_exposes_core_and_module_tools():
         "check_substance_authorization",
         "get_parcel_state",
         "get_risk_catalog",
+        "get_operation_history",
     }
     # Core tools are not gated behind any installed module; the module-backed
     # adapters each carry the module id the registry filters on.
@@ -30,6 +31,7 @@ def test_available_tools_exposes_core_and_module_tools():
     assert gated == {
         "get_active_alerts": "risk",
         "get_risk_catalog": "risk",
+        "get_operation_history": "field-operations",
         "get_weather_conditions": "weather-map",
         "get_crop_trial_evidence": "bioorchestrator",
         "check_substance_authorization": "cue",

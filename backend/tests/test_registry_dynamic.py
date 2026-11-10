@@ -44,6 +44,7 @@ CORE_NAMES = {
     "get_parcel_snapshot",
     "get_timeseries",
     "get_parcel_daily_weather",
+    "get_parcel_state",
 }
 
 
@@ -179,6 +180,9 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
         ("WEATHER_API_URL", "get_parcel_daily_weather", None),
         ("BIOORCH_API_URL", "get_crop_trial_evidence", "bioorchestrator"),
         ("CUE_API_URL", "check_substance_authorization", "cue"),
+        ("MOBILE_API_URL", "get_parcel_state", None),
+        ("RISK_URL", "get_risk_catalog", "risk"),
+        ("FIELD_OPS_URL", "get_operation_history", "field-operations"),
     ],
 )
 async def test_unconfigured_url_hides_the_tool(db_pool, monkeypatch, env, tool, module):
@@ -211,6 +215,7 @@ async def test_fail_open_subset_is_core_intersect_configured(db_pool, monkeypatc
         "get_parcels",
         "get_parcel_snapshot",
         "get_parcel_daily_weather",
+        "get_parcel_state",
     }
 
 
