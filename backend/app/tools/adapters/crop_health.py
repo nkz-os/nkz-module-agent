@@ -116,6 +116,9 @@ async def get_vigour_zones(
         logger.warning("tool_get_vigour_zones_malformed")
         return _fail()
 
+    if body.get("isWholeParcel") is True:
+        return _empty(short_id)
+
     raw_parcel = body.get("parcelValues")
     if not isinstance(raw_parcel, dict):
         raw_parcel = body.get("parcel")

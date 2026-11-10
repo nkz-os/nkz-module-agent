@@ -132,6 +132,17 @@ async def test_failures_are_fail_closed(monkeypatch, body, status):
 
 
 @pytest.mark.asyncio
+async def test_upstream_whole_parcel_flag_wins(monkeypatch):
+    _install(monkeypatch, {"isWholeParcel": True, "zones": [_zone("z1", 1)],
+                           "parcelValues": {}})
+    res = await crop_health.get_vigour_zones(
+        _ctx(), crop_health.GetVigourZonesArgs(parcel_id=URN)
+    )
+    assert res.ok is True and res.payload["isWholeParcel"] is True
+    assert res.payload["zones"] == []
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_does_not_call(monkeypatch):
     box = _install(monkeypatch, {}, url="")
     res = await crop_health.get_vigour_zones(

@@ -1,6 +1,7 @@
 """Vegetation adapter: NDVI of one parcel over the last six months.
 
-Auth is X-Tenant-ID + X-User-ID. The route takes the full parcel URN.
+Header set is the one the platform backends verify: X-Tenant-ID, X-User-ID,
+X-User-Roles and X-Auth-Signature (HMAC). The route takes the full parcel URN.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import httpx
+from nkz_platform_sdk.crypto import generate_hmac_signature
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.config import get_settings
@@ -84,7 +86,14 @@ async def get_vegetation_trend(
         f"{settings.vegetation_url.rstrip('/')}/api/vegetation/scenes/"
         f"{quote(args.parcel_id, safe='')}/stats"
     )
-    headers = {"X-Tenant-ID": ctx.tenant_id, "X-User-ID": ctx.user_id}
+    headers = {
+        "X-Tenant-ID": ctx.tenant_id,
+        "X-User-ID": ctx.user_id,
+        "X-User-Roles": ",".join(ctx.roles),
+        "X-Auth-Signature": generate_hmac_signature(
+            settings.hmac_secret, "", ctx.tenant_id
+        ),
+    }
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             resp = await client.get(
@@ -104,10 +113,6 @@ async def get_vegetation_trend(
 
     try:
         points = [Point.model_validate(p) for p in body["data_points"]]
-        raw_summary = body.get("summary")
-        summary = Summary.model_validate(
-            raw_summary if isinstance(raw_summary, dict) else {}
-        )
     except ValidationError:
         logger.warning("tool_get_vegetation_trend_malformed", exc_info=True)
         return _fail()
@@ -117,6 +122,16 @@ async def get_vegetation_trend(
         return _empty(args.parcel_id)
 
     points = points[-_MAX_POINTS:]  # newest last
+    # Recomputed from the kept points so it never contradicts them.
+    means = [p.mean for p in points if p.mean is not None]
+    lows = [p.min if p.min is not None else p.mean for p in points]
+    highs = [p.max if p.max is not None else p.mean for p in points]
+    summary = Summary(
+        avg=round(sum(means) / len(means), 4),
+        min=min(lows),
+        max=max(highs),
+        count=len(points),
+    )
     return _result(
         {
             "index": "NDVI",

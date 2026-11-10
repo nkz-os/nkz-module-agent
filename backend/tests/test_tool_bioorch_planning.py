@@ -125,7 +125,7 @@ async def test_milestones_unsupported_crop_is_ok(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body,status", [({"detail": "x"}, 503), ({"detail": "x"}, 404),
-                                         ({"state": "bogus"}, 200), (["x"], 200),
+                                         (["x"], 200),
                                          (ValueError("bad json"), 200),
                                          ({"state": "failed"}, 200)])
 async def test_milestones_failures_are_fail_closed(monkeypatch, body, status):
@@ -135,6 +135,17 @@ async def test_milestones_failures_are_fail_closed(monkeypatch, body, status):
     )
     assert res.ok is False
     assert res.unavailable_reason == "bioorchestrator unreachable"
+
+
+@pytest.mark.asyncio
+async def test_milestones_unknown_state_is_ok_unavailable(monkeypatch):
+    _install(monkeypatch, {"state": "queued", "unavailable": []})
+    res = await bioorch.get_cereal_milestones(
+        _ctx(), bioorch.GetCerealMilestonesArgs(parcel_id=URN)
+    )
+    assert res.ok is True
+    assert res.payload == {"state": "unavailable", "unavailable_reason": "unknown_state"}
+    assert len(res.citations) >= 1
 
 
 @pytest.mark.asyncio

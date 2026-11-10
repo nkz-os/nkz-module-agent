@@ -258,7 +258,7 @@ class _PhenologyBlock(_Frozen):
 
 
 class _PhenologyResponse(_Frozen):
-    state: Literal["unavailable", "done", "failed"]
+    state: str
     unavailable: tuple[_Unavailable, ...] = ()
     season: _Season | None = None
     phenology: _PhenologyBlock | None = None
@@ -283,6 +283,10 @@ async def get_cereal_milestones(
     reason = next((u.reason for u in resp.unavailable if u.reason), None)
     if resp.state == "failed":
         return _planning_fail()
+    if resp.state not in ("unavailable", "done"):
+        # A state this adapter does not know is not an outage: say so.
+        resp = resp.model_copy(update={"state": "unavailable"})
+        reason = "unknown_state"
     if resp.state == "unavailable":
         # e.g. unsupported_crop: the model must learn "not a cereal", so OK.
         payload: dict[str, Any] = {"state": "unavailable"}

@@ -56,7 +56,7 @@ def _install(monkeypatch, body, status=200, url="http://vegetation.invalid"):
 
     monkeypatch.setattr(vegetation.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(
-        vegetation, "get_settings", lambda: SimpleNamespace(vegetation_url=url)
+        vegetation, "get_settings", lambda: SimpleNamespace(vegetation_url=url, hmac_secret="s")
     )
     return box
 
@@ -74,7 +74,7 @@ async def test_happy_request_and_payload(monkeypatch):
             {"date": "2026-10-20", "mean": 0.62, "min": 0.3, "max": 0.8, "std_dev": 0.1},
             {"date": "2026-10-05", "mean": 0.55, "min": 0.2, "max": 0.7, "std_dev": 0.1},
         ],
-        "summary": {"avg": 0.585, "min": 0.2, "max": 0.8, "count": 2},
+        "summary": {"avg": 9.9, "min": 9.9, "max": 9.9, "count": 99},
     })
     res = await vegetation.get_vegetation_trend(
         _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
@@ -91,7 +91,18 @@ async def test_happy_request_and_payload(monkeypatch):
         "urn%3Angsi-ld%3AAgriParcel%3Ap1/stats"
     )
     assert box["params"] == {"index_type": "NDVI", "months": 6}
-    assert box["headers"] == {"X-Tenant-ID": "acme", "X-User-ID": "u"}
+    h = box["headers"]
+    assert h["X-Tenant-ID"] == "acme" and h["X-User-ID"] == "u"
+    assert h["X-User-Roles"] == "Farmer" and h["X-Auth-Signature"]
+
+
+@pytest.mark.asyncio
+async def test_summary_recomputed_from_kept_points(monkeypatch):
+    _install(monkeypatch, {"data_points": _pts(45), "summary": {"count": 45, "avg": 9}})
+    res = await vegetation.get_vegetation_trend(
+        _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
+    )
+    assert res.payload["summary"] == {"avg": 0.5, "min": 0.1, "max": 0.9, "count": 30}
 
 
 @pytest.mark.asyncio
