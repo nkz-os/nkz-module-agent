@@ -337,7 +337,7 @@ def _assert_nudge_in_last_tool_message(messages):
     assert messages[-1]["content"].endswith(">>>")
     assert sum(_ANSWER_NOW_TEXT in str(m.get("content")) for m in messages) == 1
     assert [m["role"] for m in messages].count("user") == 1
-    assert "language of the farmer's message" in _ANSWER_NOW_TEXT
+    assert "Tool budget exhausted" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio

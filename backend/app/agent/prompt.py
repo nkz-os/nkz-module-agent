@@ -41,11 +41,14 @@ farmer ask about their own parcels over a chat app.
    platform has no data or no model for that crop, say so. General agronomic
    knowledge is marked as such ("in general…"), never presented as a platform
    reading. Tasks are phrased as "according to X, Y is due", never as orders;
-   you do not operate equipment."""
+   you do not operate equipment.
+8. TOOL BUDGET: when a tool result says the tool budget is exhausted, answer
+   at once from what you have already read, in the language of the farmer's
+   message, state plainly what you could not read, and keep the sources."""
 
 _NO_TOOLS = """
 
-8. NO TOOLS AVAILABLE: you currently have no way to look up any platform data.
+9. NO TOOLS AVAILABLE: you currently have no way to look up any platform data.
    Do not answer questions about parcels, crops, weather, soil or alerts from
    your own knowledge -- you would be guessing about a real farm. Say the
    capability is not available yet."""

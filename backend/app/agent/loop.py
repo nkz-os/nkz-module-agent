@@ -65,17 +65,17 @@ ERROR_TEXT = (
 # answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
 
-# Folded into the last tool message of the pass before the first no-tools pass
-# (never a user message after tool messages: some providers reject that shape):
-# the paid tool results must become an answer, not an aborted turn.
+# A FACT folded into the last tool message of the pass before the first
+# no-tools pass (never a user message after tool messages: some providers
+# reject that shape). What to do about it is system prompt rule 8 (trusted),
+# since instructions inside a fence are ignored by design.
 _ANSWER_NOW_TEXT = (
-    "No more tool calls are available for this question. Answer now, in the "
-    "language of the farmer's message, from what you have already read; state "
-    "plainly what you could not read; keep the sources."
+    "Tool budget exhausted for this question; no further tool calls will run "
+    "in this turn."
 )
 # Tokens the final no-tools pass carries on top of the tool results: the nudge
 # and one placeholder per excess call. Kept out of the room given to results.
-_NUDGE_TOKENS = 50
+_NUDGE_TOKENS = 70
 _PLACEHOLDER_TOKENS = 40
 _TOOL_BUDGET_UNAVAILABLE = "unavailable: tool budget exhausted"
 
@@ -281,7 +281,7 @@ async def run_turn(
                     timeout_s=budget.remaining_seconds(),
                 )
             except LLMProviderError:
-                if offer_tools is not None or tools is None:
+                if offer_tools is not None or tools is None or not answer_now_sent:
                     raise
                 # The no-tools answer pass failed (some providers refuse a
                 # tool-bearing history without tool specs): the model may
@@ -359,8 +359,6 @@ async def run_turn(
                 budget, reply, assistant_message, max(len(allowed), 1),
                 extra_tokens,
             )
-            # Reported calls are the ones the model attempted, executed or not.
-            seen_calls.extend(excess)
             for call in allowed:
                 seen_calls.append(call)
                 budget.spend_tool_call()
@@ -370,6 +368,9 @@ async def run_turn(
                         turn_citations,
                     )
                 )
+            # Reported calls are the ones the model attempted, executed or not,
+            # in request order (the excess is always the tail).
+            seen_calls.extend(excess)
             for call in excess:
                 messages.append(
                     _tool_result(call.get("id") or "", _TOOL_BUDGET_UNAVAILABLE)
