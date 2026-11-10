@@ -172,17 +172,15 @@ async def get_parcel_state(
         return _fail()
 
     ops = body.get("operations")
+    raw_state = body.get("state")
+    state_meta = raw_state if isinstance(raw_state, dict) else {}
     try:
         state = ParcelState(
             crop=body["crop"],
             campaign=body.get("campaign"),
-            state=body.get("state"),
-            assessedAt=(body.get("state") or {}).get("assessedAt")
-            if isinstance(body.get("state"), dict)
-            else None,
-            freshness=(body.get("state") or {}).get("freshness")
-            if isinstance(body.get("state"), dict)
-            else None,
+            state=raw_state,
+            assessedAt=state_meta.get("assessedAt"),
+            freshness=state_meta.get("freshness"),
             forecast=_forecast(body.get("forecast")),
             nextJob=body.get("nextJob"),
             operations=[

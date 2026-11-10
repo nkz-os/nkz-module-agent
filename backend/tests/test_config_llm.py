@@ -79,7 +79,7 @@ def test_byok_settings_defaults(monkeypatch):
     assert s.llm_key_encryption_keys == ""
     assert s.llm_endpoint_allowlist == ""
     assert s.llm_platform_fallback is False
-    assert s.max_tokens_per_turn_ceiling == 4000
+    assert s.max_tokens_per_turn_ceiling == 8000
 
 
 def test_ceiling_falls_back_to_legacy_env(monkeypatch):

@@ -84,10 +84,9 @@ async def test_maps_rows_and_empty_groups_stay_list(monkeypatch):
 async def test_failures_are_unavailable(monkeypatch, body, status):
     _install(monkeypatch, body, status)
     res = await risk.get_risk_catalog(_ctx(), risk.GetRiskCatalogArgs())
-    if status == 200:
-        assert res.ok is False
-    else:
-        assert res.ok is False and res.citations == ()
+    assert res.ok is False
+    assert res.unavailable_reason == "risk catalog unreachable"
+    assert res.citations == ()
 
 
 @pytest.mark.asyncio

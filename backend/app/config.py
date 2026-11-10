@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     # MAX_TOKENS_PER_TURN_CEILING; falls back to the legacy MAX_TOKENS_PER_TURN
     # so existing deployments keep their value.
     max_tokens_per_turn_ceiling: int = Field(
-        default=4000,
+        default=8000,
         validation_alias=AliasChoices(
             "MAX_TOKENS_PER_TURN_CEILING", "MAX_TOKENS_PER_TURN"
         ),

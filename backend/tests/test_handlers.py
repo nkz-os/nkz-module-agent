@@ -408,3 +408,42 @@ async def test_config_lookup_error_falls_back_to_ceiling(
         budget = await _budget_for_tenant(monkeypatch, boom)
     assert budget._max_tokens == 4000
     assert any(r.levelno == logging.WARNING and "budget" in r.getMessage() for r in caplog.records)
+
+
+async def test_code_default_ceiling_is_8000(monkeypatch, clear_settings_cache):
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN_CEILING", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().max_tokens_per_turn == 8000
+    assert get_settings().max_tokens_per_turn_ceiling == 8000
+
+
+async def test_default_budget_is_not_the_ceiling_when_lower(
+    db_pool, monkeypatch, clear_settings_cache
+):
+    async def none_get(tenant_id):
+        return None
+
+    seen = {}
+
+    async def capture(text, budget, ctx, context_note=None):
+        seen["budget"] = budget
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "8000")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.handlers.run_turn", capture)
+    monkeypatch.setattr("app.handlers.configs.get", none_get)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-a")
+    assert seen["budget"]._max_tokens == get_settings().max_tokens_per_turn == 8000
+
+
+async def test_tenant_config_below_ceiling_wins_over_default(
+    db_pool, monkeypatch, clear_settings_cache
+):
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    budget = await _budget_for_tenant(monkeypatch, _cfg(1500))
+    assert budget._max_tokens == 1500
