@@ -2,16 +2,21 @@
 
 POST creates a queued turn and schedules it; the app polls GET until it is
 terminal. Identity comes only from the gateway headers; error bodies are
-`{"detail": {"code": ...}}`.
+`{"detail": {"code": ...}}` (422 validation adds `fields`, never the input).
+The one exception is 401 from `require_auth` (auth layer): a plain detail string.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import uuid
+from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, PlainTextResponse
 from nkz_platform_sdk.orion import OrionClient
 from pydantic import BaseModel, Field
 
@@ -27,7 +32,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["mobile"])
 
 MOBILE_CHANNEL = "mobile"
-_PARCEL_PREFIX = "urn:ngsi-ld:AgriParcel:"
+_PARCEL_RE = re.compile(r"^urn:ngsi-ld:AgriParcel:[A-Za-z0-9._:-]{1,120}$")
+_PARCEL_TYPES = ("AgriParcel", "https://saref.etsi.org/saref4agri/AgriParcel")
+_NAME_MAX = 80
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 
 
 def _err(code: int, name: str, **extra) -> HTTPException:
@@ -63,25 +71,24 @@ def _view(t: turns.MobileTurn) -> dict:
     }
 
 
-def _max_age_seconds() -> int:
-    s = get_settings()
-    return s.turn_timeout_seconds + s.mobile_turn_orphan_grace_seconds
-
-
 def _name_of(entity: dict, fallback: str) -> str:
+    """Tenant-written text: single line, no control chars, capped."""
     raw = entity.get("name")
     if isinstance(raw, dict):
         raw = raw.get("value")
-    return raw if isinstance(raw, str) and raw.strip() else fallback
+    if not isinstance(raw, str):
+        return fallback
+    clean = _CONTROL_RE.sub(" ", raw).replace('"', "'").strip()[:_NAME_MAX].strip()
+    return clean or fallback
 
 
 async def _parcel_context(tenant_id: str, parcel_id: str) -> str:
     """Prove the parcel is in the tenant; any miss or broker error is a 404."""
-    if not parcel_id.startswith(_PARCEL_PREFIX) or len(parcel_id) == len(_PARCEL_PREFIX):
+    if not _PARCEL_RE.fullmatch(parcel_id):
         raise _err(422, "invalid_parcel")
     client = OrionClient(tenant_id)
     try:
-        entity = await client.get_entity(parcel_id)
+        entity = await client.get_entity(quote(parcel_id, safe=":"))
     except Exception:
         # Fail closed: an unverified parcel never reaches the prompt.
         logger.warning(
@@ -90,9 +97,13 @@ async def _parcel_context(tenant_id: str, parcel_id: str) -> str:
         raise _err(404, "invalid_parcel") from None
     finally:
         await client.close()
-    if not isinstance(entity, dict):
+    if (
+        not isinstance(entity, dict)
+        or entity.get("id") != parcel_id
+        or entity.get("type") not in _PARCEL_TYPES
+    ):
         raise _err(404, "invalid_parcel")
-    return f"Parcela en contexto: {_name_of(entity, parcel_id)} ({parcel_id})"
+    return f'Parcela en contexto: "{_name_of(entity, parcel_id)}" ({parcel_id})'
 
 
 @router.post("/mobile/turns", status_code=202)
@@ -121,6 +132,9 @@ async def create_mobile_turn(
     if body.parcel_id is not None:
         parcel_context = await _parcel_context(user.tenant_id, body.parcel_id)
 
+    await turns.expire_orphans_for_user(
+        user.tenant_id, user.user_id, turns.orphan_max_age(settings)
+    )
     if await turns.has_open_turn(user.tenant_id, user.user_id):
         raise _err(409, "turn_in_progress")
 
@@ -154,7 +168,7 @@ def _is_stale(t: turns.MobileTurn) -> bool:
     if t.state not in ("queued", "running"):
         return False
     age = datetime.now(timezone.utc) - t.created_at
-    return age > timedelta(seconds=_max_age_seconds())
+    return age > timedelta(seconds=turns.orphan_max_age())
 
 
 @router.get("/mobile/turns/{turn_id}")
@@ -178,3 +192,34 @@ async def mobile_history(
     limit = min(limit, get_settings().mobile_history_limit)
     rows = await turns.list_history(user.tenant_id, user.user_id, limit)
     return {"turns": [_view(t) for t in rows]}
+
+
+def install_error_handlers(app, prefix: str) -> None:
+    """Uniform error bodies for the mobile paths only (other routes untouched)."""
+    mobile_prefix = f"{prefix}/mobile/"
+
+    def _is_mobile(request: Request) -> bool:
+        return request.url.path.startswith(mobile_prefix)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(request: Request, exc: RequestValidationError):
+        if not _is_mobile(request):
+            from fastapi.exception_handlers import request_validation_exception_handler
+            return await request_validation_exception_handler(request, exc)
+        fields = [
+            ".".join(str(p) for p in e.get("loc", ()) if p != "body")
+            for e in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"code": "invalid_request", "fields": fields}},
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        logger.error(
+            "mobile_unhandled_error path=%s", request.url.path, exc_info=exc
+        )
+        if _is_mobile(request):
+            return JSONResponse(status_code=500, content={"detail": {"code": "error"}})
+        return PlainTextResponse("Internal Server Error", status_code=500)

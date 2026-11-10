@@ -171,7 +171,7 @@ async def test_resolver_failure_records_origin_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reply_origin_reaches_the_turn_result(monkeypatch):
-    async def fake(messages, tools=None, tenant_id=None):
+    async def fake(messages, tools=None, tenant_id=None, **_kw):
         return LLMReply(text="hola", tool_calls=(), tokens_prompt=1,
                         tokens_completion=1, model="m", origin="tenant")
 
@@ -325,7 +325,7 @@ async def test_provider_error_does_not_leak_secret_text(monkeypatch):
 async def test_system_prompt_is_sent_first(monkeypatch):
     seen = {}
 
-    async def capture(messages, tools=None, tenant_id=None):
+    async def capture(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                          tokens_completion=1, model="m")
@@ -352,7 +352,7 @@ async def test_untrusted_message_reaches_model_fenced(monkeypatch):
     wrapped by wrap_untrusted, not concatenated raw into the prompt."""
     seen = {}
 
-    async def capture(messages, tools=None, tenant_id=None):
+    async def capture(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                          tokens_completion=1, model="m")
@@ -427,7 +427,7 @@ async def test_system_prompt_variant_follows_the_registry(monkeypatch):
     tools_for() patched empty, the system message is the NO-tools prompt."""
     seen = {}
 
-    async def capture(messages, tools=None, tenant_id=None):
+    async def capture(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                          tokens_completion=1, model="m")
@@ -447,7 +447,7 @@ async def test_system_prompt_defaults_to_with_tools_variant(monkeypatch):
     send system_prompt(True) -- the with-tools variant now in flight."""
     seen = {}
 
-    async def capture(messages, tools=None, tenant_id=None):
+    async def capture(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                          tokens_completion=1, model="m")
@@ -470,7 +470,7 @@ async def test_attempted_tool_calls_reported_in_turn_result(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         return replies.pop(0)
 
     monkeypatch.setattr("app.agent.loop.complete", complete)
@@ -515,7 +515,7 @@ async def test_tool_call_is_executed_and_result_returns_to_model(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return replies.pop(0)
 
@@ -563,7 +563,7 @@ async def test_unknown_tool_name_is_not_executed(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return replies.pop(0)
 
@@ -605,7 +605,7 @@ async def test_invalid_arguments_are_not_executed(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return replies.pop(0)
 
@@ -648,7 +648,7 @@ async def test_unavailable_result_reaches_model_as_unavailable(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return replies.pop(0)
 
@@ -698,7 +698,7 @@ async def test_second_pass_tokens_accumulate(monkeypatch):
         handler=handler, required_module=None,
     )
 
-    async def two_passes(messages, tools=None, tenant_id=None):
+    async def two_passes(messages, tools=None, tenant_id=None, **_kw):
         if not any(m.get("role") == "tool" for m in messages):
             return LLMReply(
                 text="", tool_calls=(
@@ -738,7 +738,7 @@ async def test_huge_tool_payload_is_truncated(monkeypatch):
 
     seen = {}
 
-    async def two_passes(messages, tools=None, tenant_id=None):
+    async def two_passes(messages, tools=None, tenant_id=None, **_kw):
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         if not tool_msgs:
             return LLMReply(
@@ -790,7 +790,7 @@ async def test_memory_is_injected_after_system(monkeypatch):
     async def save(ctx, messages, budget_chars=None):
         saved["messages"] = messages
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["messages"] = messages
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                         tokens_completion=1, model="m")
@@ -888,7 +888,7 @@ def _one_tool_turn(monkeypatch, tool, call_name="probe", arguments="{}"):
     """Run a turn where the model calls one tool once; return seen messages."""
     seen = {}
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         if not any(m.get("role") == "tool" for m in messages):
             return LLMReply(
                 text=None,
@@ -1034,7 +1034,7 @@ def _default_budget():
 def _chars4_provider(calls_per_pass: int, final_reply_tokens: int, record: dict):
     """A provider billed chars/4 over the full JSON of what it is sent."""
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         prompt = _chars4_tokens(messages, tools)
         record.setdefault("prompts", []).append(prompt)
         if not any(m.get("role") == "tool" for m in messages):
@@ -1428,7 +1428,7 @@ async def test_run_turn_collects_citations_from_ok_tools(monkeypatch):
                  tokens_completion=1, model="m"),
     ]
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         return replies.pop(0)
 
     monkeypatch.setattr("app.agent.registry.tools_for", _tools_for(*tools))
@@ -1443,7 +1443,7 @@ async def test_run_turn_collects_citations_from_ok_tools(monkeypatch):
 async def test_run_turn_passes_context_note_to_system_prompt(monkeypatch):
     seen = {}
 
-    async def complete(messages, tools=None, tenant_id=None):
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
         seen["system"] = messages[0]["content"]
         return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
                         tokens_completion=1, model="m")
@@ -1452,3 +1452,16 @@ async def test_run_turn_passes_context_note_to_system_prompt(monkeypatch):
     r = await run_turn("hola", _budget(), _ctx(), context_note="Parcel: P1")
     assert r.citations == ()
     assert seen["system"].endswith("Context for this turn: Parcel: P1")
+
+
+async def test_provider_timeout_is_capped_by_remaining_budget(monkeypatch):
+    seen = {}
+
+    async def capture(messages, tools=None, tenant_id=None, **kw):
+        seen.update(kw)
+        return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
+                        tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", capture)
+    await run_turn("hola", _budget(timeout_s=3), _ctx())
+    assert seen["timeout_s"] <= 3

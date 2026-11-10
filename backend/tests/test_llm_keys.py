@@ -115,8 +115,33 @@ async def test_startup_expires_orphan_mobile_turns(monkeypatch):
     async with lifespan(create_app()):
         pass
     s = get_settings()
-    assert seen == [s.turn_timeout_seconds + s.mobile_turn_orphan_grace_seconds]
+    from app.mobile.turns import orphan_max_age
+
+    assert seen == [orphan_max_age(s)]
+    assert orphan_max_age(s) == (
+        s.turn_timeout_seconds + 15 + s.mobile_turn_orphan_grace_seconds
+    )
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_startup_survives_a_failing_orphan_reaper(monkeypatch, caplog):
+    import logging
+
+    from app.main import create_app, lifespan
+
+    async def reaper(max_age):
+        raise RuntimeError("relation agent_mobile_turns does not exist")
+
+    monkeypatch.setattr("app.main.mobile_turns.expire_orphans", reaper)
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://u:p@localhost/db")
+    with caplog.at_level(logging.CRITICAL, logger="app.main"):
+        async with lifespan(create_app()):
+            pass
+    assert any(
+        r.levelno == logging.CRITICAL and "mobile_turns_reaper_failed" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio

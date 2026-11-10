@@ -8,11 +8,27 @@ qualifies tenant_id AND user_id; the only statements keyed by turn_id alone
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.config import get_settings
 from app.db import get_pool
+
+logger = logging.getLogger(__name__)
+
+# One tool timeout of slack past the turn deadline (a tool may finish late).
+_TOOL_SLACK_SECONDS = 15
+
+
+def orphan_max_age(settings=None) -> int:
+    """Age after which a queued/running turn is presumed dead."""
+    s = settings or get_settings()
+    return (
+        s.turn_timeout_seconds + _TOOL_SLACK_SECONDS
+        + s.mobile_turn_orphan_grace_seconds
+    )
 
 _COLUMNS = (
     "turn_id, tenant_id, user_id, client_turn_id, parcel_id, lang, text, state, "
@@ -155,16 +171,20 @@ async def has_open_turn(tenant_id: str, user_id: str) -> bool:
 
 
 async def list_history(tenant_id: str, user_id: str, limit: int) -> list[MobileTurn]:
+    """Newest first, within the memory TTL; stale open rows are failed first."""
+    settings = get_settings()
+    await expire_orphans_for_user(tenant_id, user_id, orphan_max_age(settings))
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT {_COLUMNS} FROM agent_mobile_turns
              WHERE tenant_id = $1 AND user_id = $2
+               AND created_at > now() - make_interval(hours => $4)
              ORDER BY created_at DESC, turn_id DESC
              LIMIT $3
             """,
-            tenant_id, user_id, limit,
+            tenant_id, user_id, limit, int(settings.memory_ttl_hours),
         )
     return [_row(r) for r in rows]
 
@@ -184,34 +204,52 @@ async def mark_running(turn_id: str) -> bool:
     return row is not None
 
 
+async def _log_skipped(conn, turn_id: str) -> None:
+    """A terminal write that touched no row must never vanish silently."""
+    state = await conn.fetchval(
+        "SELECT state FROM agent_mobile_turns WHERE turn_id = $1",
+        _as_uuid(turn_id),
+    )
+    logger.warning(
+        "mobile_turn_terminal_overwrite_skipped turn_id=%s state=%s",
+        turn_id, state,
+    )
+
+
 async def mark_done(
     turn_id: str, reply_text: str, citations: list[dict], outcome: str
 ) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        row = await conn.fetchrow(
             """
             UPDATE agent_mobile_turns
                SET state = 'done', reply_text = $2, citations = $3::jsonb,
                    outcome = $4, finished_at = now()
              WHERE turn_id = $1 AND state IN ('queued', 'running')
+            RETURNING turn_id
             """,
             _as_uuid(turn_id), reply_text, json.dumps(citations), outcome,
         )
+        if row is None:
+            await _log_skipped(conn, turn_id)
 
 
 async def mark_failed(turn_id: str, error_code: str, outcome: str | None) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        row = await conn.fetchrow(
             """
             UPDATE agent_mobile_turns
                SET state = 'failed', error_code = $2, outcome = $3,
                    finished_at = now()
              WHERE turn_id = $1 AND state IN ('queued', 'running')
+            RETURNING turn_id
             """,
             _as_uuid(turn_id), error_code, outcome,
         )
+        if row is None:
+            await _log_skipped(conn, turn_id)
 
 
 async def expire_orphans(max_age_seconds: int) -> int:
@@ -228,5 +266,26 @@ async def expire_orphans(max_age_seconds: int) -> int:
             RETURNING turn_id
             """,
             float(max_age_seconds),
+        )
+    return len(rows)
+
+
+async def expire_orphans_for_user(
+    tenant_id: str, user_id: str, max_age_seconds: int
+) -> int:
+    """expire_orphans scoped to one user (read-time reaper)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            UPDATE agent_mobile_turns
+               SET state = 'failed', error_code = 'interrupted',
+                   finished_at = now()
+             WHERE tenant_id = $1 AND user_id = $2
+               AND state IN ('queued', 'running')
+               AND created_at <= now() - make_interval(secs => $3)
+            RETURNING turn_id
+            """,
+            tenant_id, user_id, float(max_age_seconds),
         )
     return len(rows)

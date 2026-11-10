@@ -698,3 +698,33 @@ async def test_internal_server_error_kind_depends_on_cause(monkeypatch):
         with pytest.raises(LLMProviderError) as ei:
             await complete([{"role": "user", "content": "hola"}])
         assert ei.value.kind == kind, str(exc)
+
+
+@pytest.mark.asyncio
+async def test_complete_caps_timeout_to_the_remaining_budget(monkeypatch):
+    seen = {}
+
+    async def fake_acompletion(**kwargs):
+        seen.update(kwargs)
+
+        class _Msg:
+            content = "r"
+            tool_calls = None
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+            usage = None
+
+        return _Resp()
+
+    monkeypatch.setenv("LLM_MODEL", "some/model")
+    monkeypatch.setenv("LLM_API_BASE", "http://example.invalid")
+    monkeypatch.setattr("app.llm.provider.acompletion", fake_acompletion)
+
+    await complete([{"role": "user", "content": "hola"}], timeout_s=3.0)
+    assert seen["timeout"] == 3.0
+    await complete([{"role": "user", "content": "hola"}], timeout_s=10_000.0)
+    assert seen["timeout"] <= 100

@@ -94,3 +94,59 @@ async def test_get_by_client_turn_id_is_scoped(db_pool):
     assert got is not None and got.turn_id == t.turn_id
     assert await turns.get_by_client_turn_id("tenant_a", "u2", "cid1") is None
     assert await turns.get_by_client_turn_id("tenant_b", "u1", "cid1") is None
+
+
+async def test_expire_orphans_for_user_is_scoped(db_pool):
+    mine, _ = await _make("eu1", user="u1")
+    other, _ = await _make("eu2", user="u2")
+    assert await turns.expire_orphans_for_user("tenant_a", "u1", 0) == 1
+    assert (await turns.get_turn("tenant_a", "u1", mine.turn_id)).error_code == "interrupted"
+    assert (await turns.get_turn("tenant_a", "u2", other.turn_id)).state == "queued"
+    assert await turns.has_open_turn("tenant_a", "u1") is False
+
+
+async def test_list_history_presents_stale_open_rows_as_interrupted(db_pool):
+    from app.db import get_pool
+
+    t, _ = await _make("st1")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE agent_mobile_turns SET created_at = now() - interval '1 hour' "
+            "WHERE turn_id = $1::uuid", t.turn_id,
+        )
+    fresh, _ = await _make("st2")
+    rows = {r.client_turn_id: r for r in await turns.list_history("tenant_a", "u1", 10)}
+    assert rows["st1"].state == "failed" and rows["st1"].error_code == "interrupted"
+    assert rows["st2"].state == "queued"
+
+
+async def test_list_history_only_within_memory_ttl(db_pool):
+    from app.config import get_settings
+    from app.db import get_pool
+
+    old, _ = await _make("ttl1")
+    new, _ = await _make("ttl2")
+    pool = await get_pool()
+    hours = get_settings().memory_ttl_hours
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE agent_mobile_turns SET state = 'done', "
+            "created_at = now() - make_interval(hours => $2) WHERE turn_id = $1::uuid",
+            old.turn_id, hours + 1,
+        )
+    rows = await turns.list_history("tenant_a", "u1", 10)
+    assert [r.client_turn_id for r in rows] == ["ttl2"]
+
+
+async def test_skipped_terminal_write_is_logged(db_pool, caplog):
+    import logging
+
+    t, _ = await _make("sk1")
+    await turns.mark_failed(t.turn_id, "interrupted", None)
+    with caplog.at_level(logging.WARNING, logger="app.mobile.turns"):
+        await turns.mark_done(t.turn_id, "late answer", [], "ok")
+        await turns.mark_failed(t.turn_id, "error", None)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert sum("mobile_turn_terminal_overwrite_skipped" in m for m in msgs) == 2
+    assert all(t.turn_id in m and "state=failed" in m for m in msgs)

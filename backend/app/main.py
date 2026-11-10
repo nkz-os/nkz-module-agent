@@ -14,6 +14,7 @@ from app.llm import keys as llm_keys
 from app.api import router as api_router
 from app.mobile import turns as mobile_turns
 from app.api.llm_config import router as llm_config_router
+from app.api.mobile import install_error_handlers
 from app.api.mobile import router as mobile_router
 from app.api.internal import router as internal_router
 from app.api.webhook import router as webhook_router
@@ -62,10 +63,15 @@ async def lifespan(app: FastAPI):
     """
     settings = get_settings()
     require_postgres_url()
-    reaped = await mobile_turns.expire_orphans(
-        settings.turn_timeout_seconds + settings.mobile_turn_orphan_grace_seconds
-    )
-    logger.info("mobile_orphan_turns_expired count=%d", reaped)
+    try:
+        reaped = await mobile_turns.expire_orphans(
+            mobile_turns.orphan_max_age(settings)
+        )
+        logger.info("mobile_orphan_turns_expired count=%d", reaped)
+    except Exception:
+        # The read-time reaper covers orphans; the table may not exist yet
+        # during a rollout. Never block startup over it.
+        logger.critical("mobile_turns_reaper_failed", exc_info=True)
     if not llm_keys.available():
         # Peripheral secret: log loudly, never exit. Tenant BYOK stays off.
         logger.critical(
@@ -117,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix=settings.api_prefix)
     app.include_router(llm_config_router, prefix=settings.api_prefix)
     app.include_router(mobile_router, prefix=settings.api_prefix)
+    install_error_handlers(app, settings.api_prefix)
 
     # Internal routes (entity-manager, other in-cluster callers) — authenticated
     # by X-Internal-Service-Secret, NOT gateway headers. See app/api/internal.py.

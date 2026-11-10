@@ -250,7 +250,10 @@ async def run_turn(
             budget.check_deadline()
             budget.spend_iteration()
 
-            reply = await complete(messages, tools=tools, tenant_id=ctx.tenant_id)
+            reply = await complete(
+                messages, tools=tools, tenant_id=ctx.tenant_id,
+                timeout_s=budget.remaining_seconds(),
+            )
             model = reply.model
             llm_origin = reply.origin
             prompt_tokens += reply.tokens_prompt
