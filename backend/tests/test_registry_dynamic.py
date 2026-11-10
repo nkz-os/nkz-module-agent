@@ -186,6 +186,7 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
         ("RISK_URL", "get_risk_catalog", "risk"),
         ("FIELD_OPS_URL", "get_operation_history", "field-operations"),
         ("CROP_HEALTH_URL", "get_vigour_zones", "crop-health"),
+        ("CROP_HEALTH_URL", "get_farm_overview", "crop-health"),
         ("VEGETATION_URL", "get_vegetation_trend", "vegetation-prime"),
     ],
 )

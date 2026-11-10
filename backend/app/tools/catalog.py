@@ -104,6 +104,7 @@ def available_tools() -> tuple[ToolDefinition, ...]:
 
     return (
         orion.GET_PARCELS,
+        crop_health.GET_FARM_OVERVIEW,
         orion.GET_PARCEL_SNAPSHOT,
         timeseries.GET_TIMESERIES,
         orion.GET_ACTIVE_ALERTS,

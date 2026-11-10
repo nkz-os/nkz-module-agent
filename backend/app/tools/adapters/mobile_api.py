@@ -211,6 +211,7 @@ GET_PARCEL_STATE = ToolDefinition(
         "Current state of one parcel: crop and sowing date with provenance, "
         "phenological stage, water/plant/risk lights, next job due, recent "
         "operations, harvest forecast, and which sources answered."
+        " For several parcels at once, prefer get_farm_overview."
     ),
     args_model=GetParcelStateArgs,
     handler=get_parcel_state,
