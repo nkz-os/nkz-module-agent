@@ -108,6 +108,8 @@ def available_tools() -> tuple[ToolDefinition, ...]:
         weather.GET_WEATHER_CONDITIONS,
         weather.GET_PARCEL_DAILY_WEATHER,
         bioorch.GET_CROP_TRIAL_EVIDENCE,
+        bioorch.GET_CEREAL_MILESTONES,
+        bioorch.GET_CROP_FIT,
         cue.CHECK_SUBSTANCE_AUTHORIZATION,
         mobile_api.GET_PARCEL_STATE,
         risk.GET_RISK_CATALOG,

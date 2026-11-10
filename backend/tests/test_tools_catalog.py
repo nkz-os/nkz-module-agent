@@ -20,6 +20,8 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_weather_conditions",
         "get_parcel_daily_weather",
         "get_crop_trial_evidence",
+        "get_cereal_milestones",
+        "get_crop_fit",
         "check_substance_authorization",
         "get_parcel_state",
         "get_risk_catalog",
@@ -34,6 +36,8 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_operation_history": "field-operations",
         "get_weather_conditions": "weather-map",
         "get_crop_trial_evidence": "bioorchestrator",
+        "get_cereal_milestones": "bioorchestrator",
+        "get_crop_fit": "bioorchestrator",
         "check_substance_authorization": "cue",
     }
     assert all(t.required_module is None for t in tools if t.name in {

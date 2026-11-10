@@ -179,6 +179,8 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
         ("WEATHER_MAP_URL", "get_weather_conditions", "weather-map"),
         ("WEATHER_API_URL", "get_parcel_daily_weather", None),
         ("BIOORCH_API_URL", "get_crop_trial_evidence", "bioorchestrator"),
+        ("BIOORCH_API_URL", "get_cereal_milestones", "bioorchestrator"),
+        ("BIOORCH_API_URL", "get_crop_fit", "bioorchestrator"),
         ("CUE_API_URL", "check_substance_authorization", "cue"),
         ("MOBILE_API_URL", "get_parcel_state", None),
         ("RISK_URL", "get_risk_catalog", "risk"),
