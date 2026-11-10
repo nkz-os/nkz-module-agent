@@ -75,6 +75,9 @@ class ToolDefinition:
     # not offer the tool at all, instead of letting the model spend a paid
     # pass to learn it is unreachable.
     required_setting: str | None = None
+    # Seconds the loop waits for the handler; the loop caps it at a fixed
+    # ceiling and at the turn's remaining time.
+    timeout_s: float = 8.0
 
 
 def available_tools() -> tuple[ToolDefinition, ...]:

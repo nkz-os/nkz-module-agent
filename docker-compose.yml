@@ -55,6 +55,11 @@ services:
       - WEATHER_API_URL=
       - BIOORCH_API_URL=
       - CUE_API_URL=
+      - CROP_HEALTH_URL=
+      - FIELD_OPS_URL=
+      - VEGETATION_URL=
+      - MOBILE_API_URL=
+      - RISK_URL=
       - HMAC_SECRET=dev-only-hmac-change-me
       # Language model — per-deployment, empty by default (config.py). Unset
       # is NOT a crash: the module starts, logs CRITICAL and answers with a

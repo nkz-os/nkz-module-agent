@@ -1172,9 +1172,8 @@ async def test_slow_tool_times_out_and_the_turn_continues(monkeypatch):
 
     tool = ToolDefinition(
         name="probe", description="p", args_model=_NoArgsTool,
-        handler=sleeper, required_module=None,
+        handler=sleeper, required_module=None, timeout_s=0.2,
     )
-    monkeypatch.setattr("app.agent.loop._TOOL_TIMEOUT_SECONDS", 0.2)
     seen = _one_tool_turn(monkeypatch, tool)
     started = time.monotonic()
     r = await run_turn("hola", _budget(), _ctx())
@@ -1182,6 +1181,55 @@ async def test_slow_tool_times_out_and_the_turn_continues(monkeypatch):
     assert time.monotonic() - started < 3
     assert r.outcome == "ok"
     assert "unavailable: tool timed out" in _content_of_tool_message(seen)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_tool_timeout_capped_at_15s(monkeypatch):
+    import asyncio
+
+    seen_timeouts = []
+    real_wait_for = asyncio.wait_for
+
+    async def spy(aw, timeout=None):
+        seen_timeouts.append(timeout)
+        return await real_wait_for(aw, timeout=timeout)
+
+    async def quick(ctx, args):
+        return ToolResult(ok=True, payload={}, citations=())
+
+    async def slow(ctx, args):
+        await asyncio.sleep(0.2)
+        return ToolResult(ok=True, payload={}, citations=())
+
+    monkeypatch.setattr("app.agent.loop.asyncio.wait_for", spy)
+
+    # A short per-tool timeout turns a slow handler into "timed out".
+    tool = ToolDefinition(
+        name="probe", description="p", args_model=_NoArgsTool,
+        handler=slow, required_module=None, timeout_s=0.05,
+    )
+    seen = _one_tool_turn(monkeypatch, tool)
+    await run_turn("hola", _budget(), _ctx())
+    assert "unavailable: tool timed out" in _content_of_tool_message(seen)
+    assert seen_timeouts[0] == 0.05
+
+    # A larger one is honoured up to the 15 s ceiling, never beyond.
+    seen_timeouts.clear()
+    tool = ToolDefinition(
+        name="probe", description="p", args_model=_NoArgsTool,
+        handler=quick, required_module=None, timeout_s=60.0,
+    )
+    _one_tool_turn(monkeypatch, tool)
+    await run_turn("hola", _budget(), _ctx())
+    assert seen_timeouts[0] == 15.0
+
+
+@pytest.mark.asyncio
+async def test_default_tool_timeout_is_8s(monkeypatch):
+    assert ToolDefinition(
+        name="p", description="p", args_model=_NoArgsTool,
+        handler=None, required_module=None,
+    ).timeout_s == 8.0
 
 
 @pytest.mark.asyncio

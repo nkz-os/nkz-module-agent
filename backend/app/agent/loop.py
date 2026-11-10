@@ -385,7 +385,7 @@ async def _dispatch_call(
 
     # One tool must neither hold the turn past its deadline nor end it: a slow
     # or failing adapter becomes one "unavailable" result and the turn goes on.
-    timeout = _TOOL_TIMEOUT_SECONDS
+    timeout = min(tool.timeout_s, _TOOL_TIMEOUT_CEILING_SECONDS)
     if budget is not None:
         timeout = min(timeout, budget.remaining_seconds())
     try:
@@ -428,9 +428,9 @@ async def _dispatch_call(
 # would allow: the per-turn cap is min(budget-derived, 8000).
 _TRUNCATED_MARK = " …[truncated]"
 
-# Upper bound for one tool handler (design: tool timeouts <= 8 s); the turn's
-# remaining time can only shorten it.
-_TOOL_TIMEOUT_SECONDS = 8.0
+# Hard ceiling for one tool handler whatever its ToolDefinition.timeout_s
+# (default 8 s); the turn's remaining time can only shorten it further.
+_TOOL_TIMEOUT_CEILING_SECONDS = 15.0
 
 
 def _tool_label(name: object) -> str:

@@ -212,3 +212,29 @@ async def test_fail_open_subset_is_core_intersect_configured(db_pool, monkeypatc
         "get_parcel_snapshot",
         "get_parcel_daily_weather",
     }
+
+
+async def test_tool_with_empty_url_setting_is_not_offered(db_pool, monkeypatch):
+    from app.config import get_settings
+
+    tool = ToolDefinition(
+        name="fake_crop_health_tool",
+        description="synthetic",
+        args_model=_Args,
+        handler=_handler,
+        required_module=None,
+        required_setting="crop_health_url",
+    )
+    monkeypatch.setattr(
+        registry, "available_tools", lambda: available_tools() + (tool,)
+    )
+
+    monkeypatch.setenv("CROP_HEALTH_URL", "http://service.invalid")
+    get_settings.cache_clear()
+    registry.clear_cache()
+    assert "fake_crop_health_tool" in {t.name for t in await registry.tools_for("tenant_ch")}
+
+    monkeypatch.setenv("CROP_HEALTH_URL", "")
+    get_settings.cache_clear()
+    registry.clear_cache()
+    assert "fake_crop_health_tool" not in {t.name for t in await registry.tools_for("tenant_ch")}

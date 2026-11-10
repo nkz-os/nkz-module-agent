@@ -131,6 +131,16 @@ spec:
               value: ""
             - name: CUE_API_URL
               value: ""
+            - name: CROP_HEALTH_URL
+              value: ""
+            - name: FIELD_OPS_URL
+              value: ""
+            - name: VEGETATION_URL
+              value: ""
+            - name: MOBILE_API_URL
+              value: ""
+            - name: RISK_URL
+              value: ""
             # Shared with api-gateway/entity-manager; the production value
             # lives in the cluster secret.
             - name: HMAC_SECRET

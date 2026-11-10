@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     weather_api_url: str = ""
     bioorch_api_url: str = ""
     cue_api_url: str = ""
+    crop_health_url: str = ""
+    field_ops_url: str = ""
+    vegetation_url: str = ""
+    mobile_api_url: str = ""
+    risk_url: str = ""
 
     # Account linking
     link_token_ttl_seconds: int = 600
