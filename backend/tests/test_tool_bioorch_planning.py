@@ -124,6 +124,24 @@ async def test_milestones_unsupported_crop_is_ok(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fit_campaign_year_is_the_end_year(monkeypatch):
+    box = _install(monkeypatch, _fit(1, ["fits"]))
+    res = await bioorch.get_crop_fit(
+        _ctx(), bioorch.GetCropFitArgs(parcel_id=URN, campaign="2026")
+    )
+    assert box["params"] == {"campaign": 2027}
+    assert res.payload["campaign_label"] == "2026/27"
+
+
+def test_default_campaign_year_rolls_over_in_july():
+    from datetime import date
+
+    assert bioorch._default_campaign_year(date(2026, 6, 30)) == 2026
+    assert bioorch._default_campaign_year(date(2026, 7, 1)) == 2027
+    assert bioorch._default_campaign_year(date(2026, 11, 10)) == 2027
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("body,status", [({"detail": "x"}, 503), ({"detail": "x"}, 404),
                                          (["x"], 200),
                                          (ValueError("bad json"), 200),
@@ -190,7 +208,8 @@ async def test_fit_happy_orders_fits_first_and_caps(monkeypatch):
     assert rows[0]["reasons"] == [{"code": "ph_low", "gate": "soil"}]
     assert "names" not in rows[0] and "has_variety_trials" not in rows[0]
     assert rows[0]["irrigation_need"]["percentiles"]["p50"] == 2.0
-    assert box["params"] == {"campaign": 2026}
+    assert box["params"] == {"campaign": 2027}
+    assert res.payload["campaign_label"] == "2026/27"
     assert box["url"].endswith("/parcels/urn%3Angsi-ld%3AAgriParcel%3Ap1/fit")
     assert box["headers"]["X-Internal-Service-Secret"] == "sek"
     assert "X-Auth-Signature" not in box["headers"]

@@ -75,9 +75,12 @@ def _result(payload: dict, short_id: str) -> ToolResult:
     )
 
 
-def _empty(short_id: str) -> ToolResult:
+_NONE_DIFFER = "Zones exist; none differs from the parcel."
+
+
+def _empty(short_id: str, note: str = _NO_ZONING) -> ToolResult:
     return _result(
-        {"isWholeParcel": True, "parcel": {}, "zones": [], "note": _NO_ZONING},
+        {"isWholeParcel": True, "parcel": {}, "zones": [], "note": note},
         short_id,
     )
 
@@ -104,8 +107,6 @@ async def get_vigour_zones(
             resp = await client.get(
                 url, params={"parcelId": short_id}, headers=headers
             )
-            if resp.status_code == 404:
-                return _empty(short_id)
             resp.raise_for_status()
             body = resp.json()
     except (httpx.HTTPError, ValueError):
@@ -133,9 +134,10 @@ async def get_vigour_zones(
 
     # Only zones flagged as differing are the point of the tool; a zone with no
     # flag (older producer) is kept.
+    had_zones = bool(zones)
     zones = [z for z in zones if z.differsFromParcel is not False]
     if not zones:
-        return _empty(short_id)
+        return _empty(short_id, _NONE_DIFFER if had_zones else _NO_ZONING)
 
     zones.sort(key=lambda z: (z.zoneRank is None, z.zoneRank or 0, z.zoneId))
     return _result(

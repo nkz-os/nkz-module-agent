@@ -179,7 +179,8 @@ async def get_operation_history(
         count = body.get("count")
         history = OperationHistory(
             operations=tuple(rows[: args.limit]),
-            truncated=(count if isinstance(count, int) else len(raw_rows))
+            truncated=len(rows) > args.limit
+            or (count if isinstance(count, int) else len(raw_rows))
             >= _UPSTREAM_LIMIT,
         )
     except ValidationError:

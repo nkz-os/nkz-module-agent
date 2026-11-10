@@ -99,8 +99,6 @@ async def get_vegetation_trend(
             resp = await client.get(
                 url, params={"index_type": "NDVI", "months": 6}, headers=headers
             )
-            if resp.status_code == 404:
-                return _empty(args.parcel_id)
             resp.raise_for_status()
             body = resp.json()
     except (httpx.HTTPError, ValueError):

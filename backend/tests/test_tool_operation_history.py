@@ -104,6 +104,17 @@ async def test_truncated_flag(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_truncated_when_more_rows_than_limit(monkeypatch):
+    rows = [
+        {"id": f"r{i}", "operationType": "sowing", "date": f"2026-01-{i % 28 + 1:02d}"}
+        for i in range(60)
+    ]
+    res, _ = await _run(monkeypatch, rows, limit=20)
+    assert len(res.payload["operations"]) == 20
+    assert res.payload["truncated"] is True
+
+
+@pytest.mark.asyncio
 async def test_product_rate_and_units(monkeypatch):
     rows = [
         {"id": "f", "operationType": "fertilization", "fertilizerType": "urea", "fertilizerRate": 120},

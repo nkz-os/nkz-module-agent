@@ -120,7 +120,6 @@ async def test_caps_to_newest_30(monkeypatch):
 @pytest.mark.parametrize("body,status", [
     ({"data_points": [], "summary": {"count": 0}}, 200),
     ({"data_points": [{"date": "2026-01-01", "mean": None}]}, 200),
-    ({"detail": "No scenes"}, 404),
 ])
 async def test_no_scenes_is_ok_empty_with_note(monkeypatch, body, status):
     _install(monkeypatch, body, status)
@@ -143,6 +142,15 @@ async def test_failures_are_fail_closed(monkeypatch, body, status):
         _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
     )
     assert res.ok is False and res.unavailable_reason == "vegetation scenes unreachable"
+
+
+@pytest.mark.asyncio
+async def test_404_is_a_failure_not_no_data(monkeypatch):
+    _install(monkeypatch, {"detail": "Not found"}, 404)
+    res = await vegetation.get_vegetation_trend(
+        _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
+    )
+    assert res.ok is False and res.citations == ()
 
 
 @pytest.mark.asyncio

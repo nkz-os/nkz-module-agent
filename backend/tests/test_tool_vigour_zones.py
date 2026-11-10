@@ -105,7 +105,6 @@ async def test_happy_sorted_by_rank_geometry_dropped_headers(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body,status", [
     ({"zones": [], "isWholeParcel": True, "parcelValues": {}}, 200),
-    ({"detail": "No zoning"}, 404),
     ({"zones": [_zone("z1", 1, differs=False)], "parcelValues": {}}, 200),
 ])
 async def test_no_zoning_is_ok_empty_with_note(monkeypatch, body, status):
@@ -160,3 +159,23 @@ def test_registration():
         "Intra-parcel zones whose vigour or stress differs from the parcel "
         "average, ranked worst first."
     )
+
+
+@pytest.mark.asyncio
+async def test_404_is_a_failure_not_no_zoning(monkeypatch):
+    _install(monkeypatch, {"detail": "Not found"}, 404)
+    res = await crop_health.get_vigour_zones(
+        _ctx(), crop_health.GetVigourZonesArgs(parcel_id=URN)
+    )
+    assert res.ok is False and res.citations == ()
+
+
+@pytest.mark.asyncio
+async def test_zones_exist_but_none_differs_says_so(monkeypatch):
+    _install(monkeypatch, {"zones": [_zone("z1", 1, differs=False)], "parcelValues": {}})
+    res = await crop_health.get_vigour_zones(
+        _ctx(), crop_health.GetVigourZonesArgs(parcel_id=URN)
+    )
+    assert res.ok is True and res.payload["zones"] == []
+    assert "none differs" in res.payload["note"]
+    assert "No zoning" not in res.payload["note"]

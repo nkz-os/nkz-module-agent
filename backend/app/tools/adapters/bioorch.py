@@ -370,18 +370,19 @@ _CAMPAIGN_PATTERN = r"^\d{4}(/\d{2})?$"
 
 class GetCropFitArgs(BaseModel):
     parcel_id: ParcelId
-    # "2026" or "2026/27"; the planning route takes the start year.
+    # "2026" or "2026/27" (both the campaign starting in 2026); the planning
+    # route takes the END year (campaign C spans Aug of C-1 to Jul of C).
     campaign: Annotated[str, StringConstraints(pattern=_CAMPAIGN_PATTERN)] | None = None
 
 
 def _default_campaign_year(today: date) -> int:
-    # ASSUMPTION: the agricultural campaign starts in September.
-    return today.year if today.month >= 9 else today.year - 1
+    """End year of the current campaign (Aug of C-1 to Jul of C)."""
+    return today.year + 1 if today.month >= 7 else today.year
 
 
 async def get_crop_fit(ctx: SessionContext, args: GetCropFitArgs) -> ToolResult:
     year = (
-        int(args.campaign[:4])
+        int(args.campaign[:4]) + 1
         if args.campaign
         else _default_campaign_year(datetime.now(timezone.utc).date())
     )
@@ -400,7 +401,11 @@ async def get_crop_fit(ctx: SessionContext, args: GetCropFitArgs) -> ToolResult:
     ]
     return ToolResult(
         ok=True,
-        payload={"campaign": year, "species": rows},
+        payload={
+            "campaign": year,
+            "campaign_label": f"{year - 1}/{str(year)[2:]}",
+            "species": rows,
+        },
         citations=(_citation("fit", args.parcel_id),),
     )
 
