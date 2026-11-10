@@ -196,7 +196,7 @@ async def get_parcel_state(
 
     return ToolResult(
         ok=True,
-        payload=state.model_dump(exclude_none=True, by_alias=True),
+        payload=state.model_dump(mode="json", exclude_none=True, by_alias=True),
         citations=(
             Citation(
                 source="mobile-api:briefing",

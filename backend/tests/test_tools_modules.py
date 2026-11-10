@@ -186,6 +186,8 @@ async def test_get_active_alerts_freezes_surface_scopes_and_filters(monkeypatch)
         "status": "active",
         "observedAt": "2026-01-01T00:00:00Z",
         "refEntity": "urn:ngsi-ld:AgriParcel:p1",
+        "plain": None,
+        "confidence": 0.95,
     }
     # Frozen surface only: a free dict would leak attributes nobody reviewed.
     assert set(result.payload[0].keys()) == {
@@ -196,10 +198,11 @@ async def test_get_active_alerts_freezes_surface_scopes_and_filters(monkeypatch)
         "status",
         "observedAt",
         "refEntity",
+        "plain",
+        "confidence",
     }
     assert "internal_note" not in result.payload[0]
     assert "refEntityType" not in result.payload[0]
-    assert "confidence" not in result.payload[0]
     assert "evaluationData" not in result.payload[0]
 
 
@@ -774,8 +777,10 @@ async def test_module_tools_filtered_out_when_tenant_has_no_installs(db_pool):
         "get_parcel_snapshot",
         "get_timeseries",
         "get_parcel_daily_weather",
+        "get_parcel_state",
     }
     assert "get_active_alerts" not in names
+    assert "get_risk_catalog" not in names
     assert "get_weather_conditions" not in names
     assert "get_crop_trial_evidence" not in names
     assert "check_substance_authorization" not in names

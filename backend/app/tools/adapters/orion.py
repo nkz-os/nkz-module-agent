@@ -66,6 +66,8 @@ class AlertSummary(BaseModel):
     status: str | None
     observedAt: str | None
     refEntity: str | None
+    plain: str | None = None
+    confidence: float | None = None
 
 
 _ALERT_PAGE_SIZE = 50
@@ -81,7 +83,9 @@ class GetParcelSnapshotArgs(BaseModel):
 
 
 class GetActiveAlertsArgs(BaseModel):
-    """get_active_alerts takes no arguments."""
+    """Optional parcel URN: keep only the alerts that point at that parcel."""
+
+    parcel_id: ParcelId | None = None
 
 
 # The Alert surface is frozen from nkz-module-risk/backend/app/alerts/contract.py:
@@ -114,6 +118,33 @@ def _ref_attr(entity: dict, key: str) -> str | None:
     return _as_str(raw)
 
 
+_NKZ_NS = "https://nkz-os.org/ns/"
+
+
+def _nkz_attr(entity: dict, key: str) -> Any:
+    """Unwrapped value of an nkz term, which Orion may return compact
+    (``plain``), prefixed (``nkz:plain``) or as a full IRI."""
+    for form in (key, f"nkz:{key}", f"{_NKZ_NS}{key}"):
+        if form in entity:
+            return _value(entity[form])
+    return None
+
+
+def _plain_text(entity: dict) -> str | None:
+    """The ``plain`` text: the Spanish entry, else the first non-empty one."""
+    raw = _nkz_attr(entity, "plain")
+    if isinstance(raw, str):
+        return raw or None
+    if isinstance(raw, dict):
+        es = raw.get("es")
+        if isinstance(es, str) and es:
+            return es
+        for text in raw.values():
+            if isinstance(text, str) and text:
+                return text
+    return None
+
+
 def _alert_summary(entity: dict) -> AlertSummary:
     return AlertSummary(
         id=entity["id"],
@@ -123,6 +154,8 @@ def _alert_summary(entity: dict) -> AlertSummary:
         status=_alert_attr(entity, "status"),
         observedAt=_alert_attr(entity, "observedAt"),
         refEntity=_ref_attr(entity, "refEntity"),
+        plain=_plain_text(entity),
+        confidence=_as_float(_nkz_attr(entity, "confidence")),
     )
 
 
@@ -295,6 +328,7 @@ async def get_active_alerts(
             a
             for a in (_alert_summary(e) for e in entities)
             if a.status == "active"
+            and (args.parcel_id is None or a.refEntity == args.parcel_id)
         ]
     except Exception:
         logger.warning("tool_get_active_alerts_orion_error", exc_info=True)
@@ -363,7 +397,9 @@ GET_ACTIVE_ALERTS = ToolDefinition(
     name="get_active_alerts",
     description=(
         "List the current tenant's active Alert entities (id, category, "
-        "alertType, severity, status, observedAt, refEntity)."
+        "alertType, severity, status, observedAt, refEntity, plain-language "
+        "text and confidence). Pass parcel_id to keep only the alerts of one "
+        "parcel."
     ),
     args_model=GetActiveAlertsArgs,
     handler=get_active_alerts,
