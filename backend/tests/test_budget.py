@@ -152,3 +152,13 @@ def test_timeout_exhaustion_blocks_later_counter_spends():
     with pytest.raises(BudgetExhausted) as e:
         b.spend_iteration()
     assert e.value.reason == "timeout"
+
+
+def test_remaining_counters_are_non_negative():
+    b = TurnBudget(max_iterations=2, max_tool_calls=1, max_tokens=10, timeout_s=5)
+    assert (b.remaining_iterations(), b.remaining_tool_calls()) == (2, 1)
+    b.spend_iteration()
+    b.spend_tool_call()
+    assert (b.remaining_iterations(), b.remaining_tool_calls()) == (1, 0)
+    b.spend_iteration()
+    assert b.remaining_iterations() == 0

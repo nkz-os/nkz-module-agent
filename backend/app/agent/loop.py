@@ -65,6 +65,14 @@ ERROR_TEXT = (
 # answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
 
+# Sent once, as a user-role message, before the first pass that runs without
+# tools: the paid tool results must become an answer, not an aborted turn.
+_ANSWER_NOW_TEXT = (
+    "No more tool calls are available for this question. Answer now from what "
+    "you have already read, state what you could not read, and keep the sources."
+)
+_TOOL_BUDGET_UNAVAILABLE = "unavailable: tool budget exhausted"
+
 _UNCONFIGURED_TEXTS = {
     "blocked": BLOCKED_TEXT,
     "key_unreadable": KEY_UNREADABLE_TEXT,
@@ -246,12 +254,28 @@ async def run_turn(
             user_message,
         ]
 
+        answer_now_sent = False
         while True:
             budget.check_deadline()
+            # The last allowed iteration, or an empty tool allowance, always
+            # runs without tools so what was read becomes an answer.
+            offer_tools = (
+                tools
+                if budget.remaining_iterations() > 1
+                and budget.remaining_tool_calls() > 0
+                else None
+            )
+            if (
+                offer_tools is None
+                and not answer_now_sent
+                and messages[-1].get("role") == "tool"
+            ):
+                messages.append({"role": "user", "content": _ANSWER_NOW_TEXT})
+                answer_now_sent = True
             budget.spend_iteration()
 
             reply = await complete(
-                messages, tools=tools, tenant_id=ctx.tenant_id,
+                messages, tools=offer_tools, tenant_id=ctx.tenant_id,
                 timeout_s=budget.remaining_seconds(),
             )
             model = reply.model
@@ -293,17 +317,30 @@ async def run_turn(
                 "tool_calls": list(reply.tool_calls),
             }
             messages.append(assistant_message)
+            # Only as many calls as the budget still allows run, in order; the
+            # excess is answered without execution so the provider sees a
+            # result for every call it made.
+            n_allowed = budget.remaining_tool_calls()
+            allowed = reply.tool_calls[:n_allowed]
+            excess = reply.tool_calls[n_allowed:]
             # One pass can ask for several tools; they share what is left.
             per_call_chars = _tool_result_chars(
-                budget, reply, assistant_message, len(reply.tool_calls)
+                budget, reply, assistant_message, max(len(allowed), 1)
             )
-            for call in reply.tool_calls:
+            for call in allowed:
                 seen_calls.append(call)
                 budget.spend_tool_call()
                 messages.append(
                     await _dispatch_call(
                         call, tools_by_name, ctx, per_call_chars, budget,
                         turn_citations,
+                    )
+                )
+            for call in excess:
+                messages.append(
+                    _tool_result(
+                        call.get("id") or "",
+                        _TOOL_BUDGET_UNAVAILABLE,
                     )
                 )
 
