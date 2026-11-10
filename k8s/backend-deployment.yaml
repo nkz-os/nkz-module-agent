@@ -201,7 +201,7 @@ spec:
             - name: MAX_TOOL_CALLS
               value: "8"
             - name: MAX_TOKENS_PER_TURN
-              value: "4000"
+              value: "8000"
             - name: MAX_TOKENS_PER_TURN_CEILING
               value: "4000"
             - name: TURN_TIMEOUT_SECONDS

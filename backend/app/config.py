@@ -99,7 +99,8 @@ class Settings(BaseSettings):
     # public endpoint is unbounded spend and unbounded latency.
     max_iterations: int = 4
     max_tool_calls: int = 8
-    max_tokens_per_turn: int = 4000
+    # The default must cover the spec cost of the full tool catalogue, paid on every pass.
+    max_tokens_per_turn: int = 8000
     # Platform ceiling on a tenant's per-turn token budget. Reads
     # MAX_TOKENS_PER_TURN_CEILING; falls back to the legacy MAX_TOKENS_PER_TURN
     # so existing deployments keep their value.
