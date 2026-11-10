@@ -108,7 +108,7 @@ def configured_service_urls(monkeypatch):
     from app.agent import registry
     from app.config import get_settings
 
-    for name in ("TIMESERIES_URL", "WEATHER_MAP_URL", "WEATHER_API_URL", "BIOORCH_API_URL", "CUE_API_URL"):
+    for name in ("TIMESERIES_URL", "WEATHER_MAP_URL", "WEATHER_API_URL", "BIOORCH_API_URL", "CUE_API_URL", "MOBILE_API_URL"):
         monkeypatch.setenv(name, "http://service.invalid")
     get_settings.cache_clear()
     registry.clear_cache()

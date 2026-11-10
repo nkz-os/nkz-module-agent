@@ -21,6 +21,7 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_parcel_daily_weather",
         "get_crop_trial_evidence",
         "check_substance_authorization",
+        "get_parcel_state",
     }
     # Core tools are not gated behind any installed module; the module-backed
     # adapters each carry the module id the registry filters on.
@@ -39,13 +40,14 @@ def test_available_tools_exposes_core_and_module_tools():
 @pytest.mark.asyncio
 async def test_registry_exposes_core_tool_specs():
     specs = await registry.tool_specs("tenant_test")
-    assert len(specs) == 4
+    assert len(specs) == 5
     assert all(s["type"] == "function" for s in specs)
     assert {s["function"]["name"] for s in specs} == {
         "get_parcels",
         "get_parcel_snapshot",
         "get_timeseries",
         "get_parcel_daily_weather",
+        "get_parcel_state",
     }
     assert await registry.has_tools("tenant_test") is True
 

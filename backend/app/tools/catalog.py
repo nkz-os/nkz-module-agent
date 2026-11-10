@@ -89,7 +89,7 @@ def available_tools() -> tuple[ToolDefinition, ...]:
     """
     # Imported lazily: adapters import catalog (for Citation/ToolResult), so a
     # module-level import here would be a cycle. This function is the seam.
-    from app.tools.adapters import bioorch, cue, orion, timeseries, weather
+    from app.tools.adapters import bioorch, cue, mobile_api, orion, timeseries, weather
 
     return (
         orion.GET_PARCELS,
@@ -100,4 +100,5 @@ def available_tools() -> tuple[ToolDefinition, ...]:
         weather.GET_PARCEL_DAILY_WEATHER,
         bioorch.GET_CROP_TRIAL_EVIDENCE,
         cue.CHECK_SUBSTANCE_AUTHORIZATION,
+        mobile_api.GET_PARCEL_STATE,
     )
