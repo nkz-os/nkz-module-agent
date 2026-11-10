@@ -65,12 +65,18 @@ ERROR_TEXT = (
 # answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
 
-# Sent once, as a user-role message, before the first pass that runs without
-# tools: the paid tool results must become an answer, not an aborted turn.
+# Folded into the last tool message of the pass before the first no-tools pass
+# (never a user message after tool messages: some providers reject that shape):
+# the paid tool results must become an answer, not an aborted turn.
 _ANSWER_NOW_TEXT = (
-    "No more tool calls are available for this question. Answer now from what "
-    "you have already read, state what you could not read, and keep the sources."
+    "No more tool calls are available for this question. Answer now, in the "
+    "language of the farmer's message, from what you have already read; state "
+    "plainly what you could not read; keep the sources."
 )
+# Tokens the final no-tools pass carries on top of the tool results: the nudge
+# and one placeholder per excess call. Kept out of the room given to results.
+_NUDGE_TOKENS = 50
+_PLACEHOLDER_TOKENS = 40
 _TOOL_BUDGET_UNAVAILABLE = "unavailable: tool budget exhausted"
 
 _UNCONFIGURED_TEXTS = {
@@ -139,7 +145,8 @@ def _size_memory(
 
 
 def _tool_result_chars(
-    budget: TurnBudget, reply: object, assistant_message: dict, n_calls: int
+    budget: TurnBudget, reply: object, assistant_message: dict, n_calls: int,
+    extra_tokens: int = 0,
 ) -> int:
     """Characters each tool result of this pass may use.
 
@@ -158,6 +165,7 @@ def _tool_result_chars(
         - reply.tokens_prompt
         - _json_tokens(assistant_message)
         - _REPLY_RESERVE_TOKENS
+        - extra_tokens
     )
     per_call = (
         max(remaining, 0) * _CHARS_PER_TOKEN // n_calls - _TOOL_MESSAGE_OVERHEAD_CHARS
@@ -265,19 +273,27 @@ async def run_turn(
                 and budget.remaining_tool_calls() > 0
                 else None
             )
-            if (
-                offer_tools is None
-                and not answer_now_sent
-                and messages[-1].get("role") == "tool"
-            ):
-                messages.append({"role": "user", "content": _ANSWER_NOW_TEXT})
-                answer_now_sent = True
             budget.spend_iteration()
 
-            reply = await complete(
-                messages, tools=offer_tools, tenant_id=ctx.tenant_id,
-                timeout_s=budget.remaining_seconds(),
-            )
+            try:
+                reply = await complete(
+                    messages, tools=offer_tools, tenant_id=ctx.tenant_id,
+                    timeout_s=budget.remaining_seconds(),
+                )
+            except LLMProviderError:
+                if offer_tools is not None or tools is None:
+                    raise
+                # The no-tools answer pass failed (some providers refuse a
+                # tool-bearing history without tool specs): the model may
+                # still answer with them, so retry once before the error path.
+                logger.warning(
+                    "answer_now_fallback_retry tenant_id=%s", ctx.tenant_id,
+                    exc_info=True,
+                )
+                reply = await complete(
+                    messages, tools=tools, tenant_id=ctx.tenant_id,
+                    timeout_s=budget.remaining_seconds(),
+                )
             model = reply.model
             llm_origin = reply.origin
             prompt_tokens += reply.tokens_prompt
@@ -319,14 +335,32 @@ async def run_turn(
             messages.append(assistant_message)
             # Only as many calls as the budget still allows run, in order; the
             # excess is answered without execution so the provider sees a
-            # result for every call it made.
-            n_allowed = budget.remaining_tool_calls()
+            # result for every call it made. A pass offered no tools executes
+            # none (the model ignored the missing specs).
+            n_allowed = (
+                budget.remaining_tool_calls() if offer_tools is not None else 0
+            )
             allowed = reply.tool_calls[:n_allowed]
             excess = reply.tool_calls[n_allowed:]
+            if excess:
+                logger.warning(
+                    "tool_calls_over_budget tenant_id=%s requested=%d allowed=%d",
+                    ctx.tenant_id, len(reply.tool_calls), len(allowed),
+                )
+            next_offers_tools = (
+                budget.remaining_iterations() > 1
+                and budget.remaining_tool_calls() - len(allowed) > 0
+            )
+            extra_tokens = 0
+            if not next_offers_tools:
+                extra_tokens = _NUDGE_TOKENS + _PLACEHOLDER_TOKENS * len(excess)
             # One pass can ask for several tools; they share what is left.
             per_call_chars = _tool_result_chars(
-                budget, reply, assistant_message, max(len(allowed), 1)
+                budget, reply, assistant_message, max(len(allowed), 1),
+                extra_tokens,
             )
+            # Reported calls are the ones the model attempted, executed or not.
+            seen_calls.extend(excess)
             for call in allowed:
                 seen_calls.append(call)
                 budget.spend_tool_call()
@@ -338,11 +372,17 @@ async def run_turn(
                 )
             for call in excess:
                 messages.append(
-                    _tool_result(
-                        call.get("id") or "",
-                        _TOOL_BUDGET_UNAVAILABLE,
-                    )
+                    _tool_result(call.get("id") or "", _TOOL_BUDGET_UNAVAILABLE)
                 )
+            if not next_offers_tools and not answer_now_sent:
+                answer_now_sent = True
+                last = messages[-1]
+                messages[-1] = {
+                    **last,
+                    "content": last["content"]
+                    + "\n\n"
+                    + _fence_tool("tool budget", _ANSWER_NOW_TEXT),
+                }
 
     except LLMUnconfigured as exc:
         logger.warning(

@@ -174,7 +174,11 @@ GET_VIGOUR_ZONES = ToolDefinition(
 
 
 _OVERVIEW_UNAVAILABLE = "crop health unreachable"
-_OVERVIEW_CAP = 60
+# The 8000-char fence on a tool result (app.agent.prompt.MAX_PAYLOAD) is the
+# effective bound; this cap only keeps the list well inside it.
+_OVERVIEW_CAP = 40
+_URN_PREFIX = "urn:ngsi-ld:"
+_PARCEL_URN_PREFIX = "urn:ngsi-ld:AgriParcel:"
 
 
 class _UpstreamNextJob(_Frozen):
@@ -253,7 +257,11 @@ def _overview_fail() -> ToolResult:
 def _map_parcel(p: _UpstreamParcel) -> OverviewParcel:
     job = p.nextJob
     return OverviewParcel(
-        parcel_id=p.parcelId,
+        parcel_id=(
+            p.parcelId
+            if p.parcelId.startswith(_URN_PREFIX)
+            else f"{_PARCEL_URN_PREFIX}{p.parcelId}"
+        ),
         name=p.parcelName,
         crop=p.cropName,
         stage=p.phenologyStage,
@@ -305,7 +313,7 @@ async def get_farm_overview(
 
     return ToolResult(
         ok=True,
-        payload=overview.model_dump(mode="json"),
+        payload=overview.model_dump(mode="json", exclude_none=True),
         citations=(
             Citation(
                 source="crop-health:parcels",

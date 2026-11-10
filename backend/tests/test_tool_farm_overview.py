@@ -89,7 +89,7 @@ async def test_happy_mapping_headers_and_citation(monkeypatch):
     assert p["truncated"] is False
     assert p["summary"] == {"surprises": 1, "jobs_today": 1, "no_data": 1}
     first, second, third = p["parcels"]
-    assert first["parcel_id"] == "p1" and first["name"] == "Parcel 1"
+    assert first["parcel_id"] == "urn:ngsi-ld:AgriParcel:p1" and first["name"] == "Parcel 1"
     assert first["crop"] == "Wheat" and first["stage"] == "tillering"
     assert first["area_ha"] == 3.5 and first["severity"] == "HIGH"
     assert first["cwsi"] == 0.6 and first["vigor"] == 0.4
@@ -99,9 +99,10 @@ async def test_happy_mapping_headers_and_citation(monkeypatch):
     assert first["next_job"]["when"] == "today"
     assert first["next_job"]["detail"] == {"mm": 12}
     assert second["next_job"]["kind"] == "pending_assessment"
-    assert second["next_job"]["when"] is None
-    assert third["has_data"] is False and third["next_job"] is None
-    assert third["crop"] is None and third["severity"] is None
+    assert "when" not in second["next_job"]
+    assert third["has_data"] is False
+    assert "next_job" not in third and "crop" not in third
+    assert "severity" not in third
     assert box["url"] == "http://crop-health.invalid/api/crop-health/parcels"
     assert not box["params"]
     assert set(box["headers"]) == {
@@ -113,22 +114,30 @@ async def test_happy_mapping_headers_and_citation(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_truncates_beyond_sixty(monkeypatch):
-    _install(monkeypatch, {"parcels": [_row(i) for i in range(61)],
+async def test_urn_parcel_id_is_not_prefixed_twice(monkeypatch):
+    _install(monkeypatch, {"parcels": [
+        _row(1) | {"parcelId": "urn:ngsi-ld:AgriParcel:abc"}], "summary": {}})
+    res = await crop_health.get_farm_overview(_ctx(), _ARGS())
+    assert res.payload["parcels"][0]["parcel_id"] == "urn:ngsi-ld:AgriParcel:abc"
+
+
+@pytest.mark.asyncio
+async def test_truncates_beyond_cap(monkeypatch):
+    _install(monkeypatch, {"parcels": [_row(i) for i in range(41)],
                            "summary": {}})
     res = await crop_health.get_farm_overview(_ctx(), _ARGS())
     assert res.ok is True
-    assert len(res.payload["parcels"]) == 60
+    assert len(res.payload["parcels"]) == 40
     assert res.payload["truncated"] is True
     assert res.payload["summary"] == {"surprises": 0, "jobs_today": 0, "no_data": 0}
 
 
 @pytest.mark.asyncio
-async def test_exactly_sixty_not_truncated(monkeypatch):
-    _install(monkeypatch, {"parcels": [_row(i) for i in range(60)],
+async def test_exactly_cap_not_truncated(monkeypatch):
+    _install(monkeypatch, {"parcels": [_row(i) for i in range(40)],
                            "summary": {}})
     res = await crop_health.get_farm_overview(_ctx(), _ARGS())
-    assert len(res.payload["parcels"]) == 60
+    assert len(res.payload["parcels"]) == 40
     assert res.payload["truncated"] is False
 
 

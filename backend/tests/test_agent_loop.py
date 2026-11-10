@@ -28,7 +28,7 @@ from app.agent.budget import TurnBudget
 from app.agent.loop import _ANSWER_NOW_TEXT, EMPTY_REPLY_TEXT, run_turn
 from app.agent.prompt import system_prompt, wrap_untrusted
 from app.domain.session import SessionContext
-from app.llm.provider import LLMReply, LLMUnconfigured
+from app.llm.provider import LLMProviderError, LLMReply, LLMUnconfigured
 from app.tools.catalog import Citation, ToolDefinition, ToolResult
 
 
@@ -329,6 +329,17 @@ def _scripted(monkeypatch, tool, first_pass_calls):
     return seen
 
 
+def _assert_nudge_in_last_tool_message(messages):
+    """The nudge rides inside the last tool message, exactly once, never as a
+    user message after tool messages."""
+    assert messages[-1]["role"] == "tool"
+    assert _ANSWER_NOW_TEXT in messages[-1]["content"]
+    assert messages[-1]["content"].endswith(">>>")
+    assert sum(_ANSWER_NOW_TEXT in str(m.get("content")) for m in messages) == 1
+    assert [m["role"] for m in messages].count("user") == 1
+    assert "language of the farmer's message" in _ANSWER_NOW_TEXT
+
+
 @pytest.mark.asyncio
 async def test_pass_using_the_whole_tool_budget_still_gets_an_answer(monkeypatch):
     executed = []
@@ -343,9 +354,7 @@ async def test_pass_using_the_whole_tool_budget_still_gets_an_answer(monkeypatch
     assert {c["source"] for c in r.citations} == {f"src:{i}" for i in range(8)}
     assert seen[0]["tools"] is not None
     assert seen[1]["tools"] is None
-    last = seen[1]["messages"][-1]
-    assert last == {"role": "user", "content": _ANSWER_NOW_TEXT}
-    assert sum(m.get("content") == _ANSWER_NOW_TEXT for m in seen[1]["messages"]) == 1
+    _assert_nudge_in_last_tool_message(seen[1]["messages"])
 
 
 @pytest.mark.asyncio
@@ -358,14 +367,93 @@ async def test_excess_calls_are_answered_unavailable_not_raised(monkeypatch):
     )
     assert r.outcome == "ok" and r.text == "final"
     assert executed == list(range(8))
-    assert len(r.tool_calls) == 8
+    assert len(r.tool_calls) == 10  # attempted, executed or not
     tool_msgs = [m for m in seen[1]["messages"] if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_msgs] == [f"c{i}" for i in range(10)]
-    assert [m["content"] for m in tool_msgs[8:]] == [
-        "unavailable: tool budget exhausted"] * 2
+    assert tool_msgs[8]["content"] == "unavailable: tool budget exhausted"
+    assert tool_msgs[9]["content"].startswith("unavailable: tool budget exhausted")
     assert all("unavailable" not in m["content"] for m in tool_msgs[:8])
+    assert _ANSWER_NOW_TEXT in tool_msgs[-1]["content"]
     assert seen[1]["tools"] is None
     assert len(r.citations) == 8
+
+
+@pytest.mark.asyncio
+async def test_no_tools_pass_never_executes_calls_and_nudges_once(monkeypatch):
+    executed = []
+    tool = _lookup_tool(executed)
+    seen = []
+    replies = [
+        LLMReply(text=None, tool_calls=_n_calls(1), tokens_prompt=1,
+                 tokens_completion=1, model="m"),
+        LLMReply(text=None, tool_calls=_n_calls(2), tokens_prompt=1,
+                 tokens_completion=1, model="m"),
+        LLMReply(text="final", tool_calls=(), tokens_prompt=1,
+                 tokens_completion=1, model="m"),
+    ]
+
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
+        seen.append({"tools": tools, "messages": [dict(m) for m in messages]})
+        return replies.pop(0)
+
+    monkeypatch.setattr("app.agent.registry.tools_for", _tools_for(tool))
+    monkeypatch.setattr("app.agent.loop.complete", complete)
+    r = await run_turn(
+        "hola", _budget(max_iterations=5, max_tool_calls=1, max_tokens=100000),
+        _ctx(),
+    )
+    assert r.outcome == "ok" and r.text == "final"
+    assert executed == [0]
+    assert seen[1]["tools"] is None and seen[2]["tools"] is None
+    assert sum(_ANSWER_NOW_TEXT in str(m.get("content")) for m in seen[2]["messages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_tools_pass_retries_once_with_tools_on_provider_error(monkeypatch):
+    executed = []
+    tool = _lookup_tool(executed)
+    seen = []
+
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
+        seen.append(tools)
+        if len(seen) == 1:
+            return LLMReply(text=None, tool_calls=_n_calls(1), tokens_prompt=1,
+                            tokens_completion=1, model="m")
+        if len(seen) == 2:
+            raise LLMProviderError("boom", origin="platform")
+        return LLMReply(text="final", tool_calls=(), tokens_prompt=1,
+                        tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.registry.tools_for", _tools_for(tool))
+    monkeypatch.setattr("app.agent.loop.complete", complete)
+    r = await run_turn(
+        "hola", _budget(max_iterations=2, max_tool_calls=8, max_tokens=100000),
+        _ctx(),
+    )
+    assert r.outcome == "ok" and r.text == "final"
+    assert seen[0] is not None and seen[1] is None and seen[2] is not None
+
+
+@pytest.mark.asyncio
+async def test_no_tools_pass_error_after_retry_falls_to_error_path(monkeypatch):
+    tool = _lookup_tool([])
+    n = {"n": 0}
+
+    async def complete(messages, tools=None, tenant_id=None, **_kw):
+        n["n"] += 1
+        if n["n"] == 1:
+            return LLMReply(text=None, tool_calls=_n_calls(1), tokens_prompt=1,
+                            tokens_completion=1, model="m")
+        raise LLMProviderError("boom", origin="platform")
+
+    monkeypatch.setattr("app.agent.registry.tools_for", _tools_for(tool))
+    monkeypatch.setattr("app.agent.loop.complete", complete)
+    r = await run_turn(
+        "hola", _budget(max_iterations=2, max_tool_calls=8, max_tokens=100000),
+        _ctx(),
+    )
+    assert r.outcome == "error"
+    assert n["n"] == 3
 
 
 @pytest.mark.asyncio
@@ -379,7 +467,7 @@ async def test_last_iteration_runs_without_tools(monkeypatch):
     assert r.outcome == "ok" and r.text == "final"
     assert seen[0]["tools"] is not None
     assert seen[1]["tools"] is None
-    assert seen[1]["messages"][-1]["content"] == _ANSWER_NOW_TEXT
+    _assert_nudge_in_last_tool_message(seen[1]["messages"])
 
 
 # --- Property 3: the user-visible text never leaks internals. ---
