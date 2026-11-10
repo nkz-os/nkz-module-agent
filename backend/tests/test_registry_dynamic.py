@@ -185,6 +185,8 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
         ("MOBILE_API_URL", "get_parcel_state", None),
         ("RISK_URL", "get_risk_catalog", "risk"),
         ("FIELD_OPS_URL", "get_operation_history", "field-operations"),
+        ("CROP_HEALTH_URL", "get_vigour_zones", "crop-health"),
+        ("VEGETATION_URL", "get_vegetation_trend", "vegetation-prime"),
     ],
 )
 async def test_unconfigured_url_hides_the_tool(db_pool, monkeypatch, env, tool, module):

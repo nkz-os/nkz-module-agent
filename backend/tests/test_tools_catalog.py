@@ -26,6 +26,8 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_parcel_state",
         "get_risk_catalog",
         "get_operation_history",
+        "get_vigour_zones",
+        "get_vegetation_trend",
     }
     # Core tools are not gated behind any installed module; the module-backed
     # adapters each carry the module id the registry filters on.
@@ -34,6 +36,8 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_active_alerts": "risk",
         "get_risk_catalog": "risk",
         "get_operation_history": "field-operations",
+        "get_vigour_zones": "crop-health",
+        "get_vegetation_trend": "vegetation-prime",
         "get_weather_conditions": "weather-map",
         "get_crop_trial_evidence": "bioorchestrator",
         "get_cereal_milestones": "bioorchestrator",

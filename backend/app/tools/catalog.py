@@ -91,12 +91,14 @@ def available_tools() -> tuple[ToolDefinition, ...]:
     # module-level import here would be a cycle. This function is the seam.
     from app.tools.adapters import (
         bioorch,
+        crop_health,
         cue,
         field_ops,
         mobile_api,
         orion,
         risk,
         timeseries,
+        vegetation,
         weather,
     )
 
@@ -114,4 +116,6 @@ def available_tools() -> tuple[ToolDefinition, ...]:
         mobile_api.GET_PARCEL_STATE,
         risk.GET_RISK_CATALOG,
         field_ops.GET_OPERATION_HISTORY,
+        crop_health.GET_VIGOUR_ZONES,
+        vegetation.GET_VEGETATION_TREND,
     )
