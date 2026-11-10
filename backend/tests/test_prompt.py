@@ -102,3 +102,21 @@ def test_truncation_cannot_reopen_the_fence():
     """Truncation runs after defusing, so it can only remove, never restore."""
     out = wrap_untrusted("orion", (">" * 4 + "x") * 5000)
     assert _body(out).count(">>>") == 1
+
+
+def test_prompt_contains_uncertainty_rule():
+    for has in (True, False):
+        p = " ".join(system_prompt(has_tools=has).split())
+        assert (
+            "8. UNCERTAINTY: when asked what a symptom, anomaly or observation "
+            '"could be", never state a diagnosis.'
+        ) in p
+        assert "never presented as a platform reading" in p
+
+
+def test_system_prompt_appends_context_note():
+    base = system_prompt(True)
+    assert system_prompt(True, context_note=None) == base
+    out = system_prompt(True, context_note="Parcel: P1")
+    assert out == base + "\n\nContext for this turn: Parcel: P1"
+    assert system_prompt(False, context_note="x").endswith("Context for this turn: x")

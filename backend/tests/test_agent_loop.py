@@ -1345,3 +1345,62 @@ async def test_over_cap_result_reaches_the_model_parsable_with_citation(monkeypa
     parsed = _unfence(_content_of_tool_message(seen))
     assert parsed["citations"] and parsed["data"]["summary"]["count"] == 50
     assert parsed["omitted"] > 0
+
+
+@pytest.mark.asyncio
+async def test_run_turn_collects_citations_from_ok_tools(monkeypatch):
+    from datetime import datetime, timezone
+
+    when = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    async def good(ctx, args):
+        return ToolResult(ok=True, payload={"a": 1}, citations=(Citation("orion", when, "d"),))
+
+    async def bad(ctx, args):
+        return ToolResult(
+            ok=False, payload=None, citations=(Citation("never", when, "x"),),
+            unavailable_reason="down",
+        )
+
+    tools = [
+        ToolDefinition(name=n, description="d", args_model=_NoArgsTool,
+                       handler=h, required_module=None)
+        for n, h in (("good", good), ("bad", bad))
+    ]
+    replies = [
+        LLMReply(
+            text=None,
+            tool_calls=tuple(
+                {"id": f"c{n}", "function": {"name": n, "arguments": "{}"}}
+                for n in ("good", "bad")
+            ),
+            tokens_prompt=1, tokens_completion=1, model="m",
+        ),
+        LLMReply(text="listo", tool_calls=(), tokens_prompt=1,
+                 tokens_completion=1, model="m"),
+    ]
+
+    async def complete(messages, tools=None, tenant_id=None):
+        return replies.pop(0)
+
+    monkeypatch.setattr("app.agent.registry.tools_for", _tools_for(*tools))
+    monkeypatch.setattr("app.agent.loop.complete", complete)
+    r = await run_turn("hola", _budget(), _ctx())
+    assert r.citations == (
+        {"source": "orion", "retrieved_at": when.isoformat(), "detail": "d"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_turn_passes_context_note_to_system_prompt(monkeypatch):
+    seen = {}
+
+    async def complete(messages, tools=None, tenant_id=None):
+        seen["system"] = messages[0]["content"]
+        return LLMReply(text="ok", tool_calls=(), tokens_prompt=1,
+                        tokens_completion=1, model="m")
+
+    monkeypatch.setattr("app.agent.loop.complete", complete)
+    r = await run_turn("hola", _budget(), _ctx(), context_note="Parcel: P1")
+    assert r.citations == ()
+    assert seen["system"].endswith("Context for this turn: Parcel: P1")

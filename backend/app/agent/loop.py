@@ -191,6 +191,7 @@ class TurnResult:
     tokens_prompt: int
     tokens_completion: int
     llm_origin: str | None = None
+    citations: tuple[dict, ...] = ()
 
 
 def _failure_origin(exc: Exception, known: str | None) -> str:
@@ -202,7 +203,10 @@ def _failure_origin(exc: Exception, known: str | None) -> str:
 
 
 async def run_turn(
-    user_text: str, budget: TurnBudget, ctx: SessionContext
+    user_text: str,
+    budget: TurnBudget,
+    ctx: SessionContext,
+    context_note: str | None = None,
 ) -> TurnResult:
     """Turn one farmer message into one reply, inside `budget`.
 
@@ -216,6 +220,7 @@ async def run_turn(
     prompt_tokens = 0
     completion_tokens = 0
     seen_calls: list[dict] = []
+    turn_citations: list[dict] = []
 
     # The whole setup lives inside the turn's try: "nothing raises out of
     # here" is a structural invariant, not a happy-path hope. A broken
@@ -232,7 +237,7 @@ async def run_turn(
             "content": wrap_untrusted(_USER_MESSAGE_SOURCE, user_text),
         }
         tools = [registry.openai_spec(tool) for tool in tool_defs] or None
-        system_text = system_prompt(bool(tool_defs))
+        system_text = system_prompt(bool(tool_defs), context_note)
         system_message = {"role": "system", "content": system_text}
         memory_chars = _size_memory(budget, system_message, tools, user_message)
         messages: list[dict] = [
@@ -270,6 +275,7 @@ async def run_turn(
                     tokens_prompt=prompt_tokens,
                     tokens_completion=completion_tokens,
                     llm_origin=llm_origin,
+                    citations=tuple(turn_citations),
                 )
 
             # The model asked for tools: record its assistant message (with
@@ -293,7 +299,8 @@ async def run_turn(
                 budget.spend_tool_call()
                 messages.append(
                     await _dispatch_call(
-                        call, tools_by_name, ctx, per_call_chars, budget
+                        call, tools_by_name, ctx, per_call_chars, budget,
+                        turn_citations,
                     )
                 )
 
@@ -320,6 +327,7 @@ async def run_turn(
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
             llm_origin=llm_origin or "none",
+            citations=tuple(turn_citations),
         )
     except Exception as exc:
         # Anything else: a provider failure (LLMProviderError, already
@@ -345,6 +353,7 @@ async def _dispatch_call(
     ctx: SessionContext,
     max_chars: int = _FENCE_MAX_CHARS,
     budget: TurnBudget | None = None,
+    collected: list[dict] | None = None,
 ) -> dict:
     """Execute one model tool call into a ``role: tool`` result message.
 
@@ -385,6 +394,8 @@ async def _dispatch_call(
         # returns something that is not a ToolResult is a tool error, not a
         # lost turn.
         if result.ok:
+            if collected is not None:
+                collected.extend(_citation_dicts(result.citations))
             if max_chars < _MIN_TOOL_RESULT_CHARS:
                 logger.warning(
                     "tool_result_omitted tenant_id=%s tool=%s room_chars=%d",

@@ -43,13 +43,11 @@ async def run_mobile_turn(
                 turn_id, ctx.tenant_id, ctx.trace_id,
             )
             return
-        # Task 4 replaces this prefix with execute_turn(..., context_note=...).
-        full_text = f"{parcel_context}\n\n{text}" if parcel_context is not None else text
-        result = await execute_turn(ctx, full_text, ctx.trace_id)
+        result = await execute_turn(
+            ctx, text, ctx.trace_id, context_note=parcel_context
+        )
         if result.outcome in ("ok", "budget_exhausted"):
-            citations = [
-                _citation_dict(c) for c in getattr(result, "citations", ())
-            ]
+            citations = [_citation_dict(c) for c in result.citations]
             await turns.mark_done(turn_id, result.text, citations, result.outcome)
         elif result.outcome == "unconfigured":
             await turns.mark_failed(turn_id, "llm_unconfigured", result.outcome)
