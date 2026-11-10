@@ -108,7 +108,7 @@ def test_prompt_contains_uncertainty_rule():
     for has in (True, False):
         p = " ".join(system_prompt(has_tools=has).split())
         assert (
-            "8. UNCERTAINTY: when asked what a symptom, anomaly or observation "
+            "7. UNCERTAINTY: when asked what a symptom, anomaly or observation "
             '"could be", never state a diagnosis.'
         ) in p
         assert "never presented as a platform reading" in p

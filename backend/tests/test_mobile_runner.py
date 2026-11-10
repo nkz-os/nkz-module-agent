@@ -5,7 +5,6 @@ import pytest
 from app.agent.loop import TurnResult
 from app.domain.session import SessionContext
 from app.mobile import runner
-from app.tools.catalog import Citation
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,7 +48,7 @@ async def test_ok_marks_done_with_citation_dicts(monkeypatch, calls):
         return TurnResult(
             text="answer", outcome="ok", model="m", tool_calls=(),
             tokens_prompt=1, tokens_completion=1,
-            citations=(Citation("orion", when, "d"), {"source": "x"}),
+            citations=({"source": "orion", "retrieved_at": when.isoformat(), "detail": "d"}, {"source": "x"}),
         )
 
     monkeypatch.setattr(runner, "execute_turn", fake)

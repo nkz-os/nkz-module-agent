@@ -119,7 +119,7 @@ async def test_linked_user_gets_an_agent_reply(db_pool, monkeypatch):
     assert reply.text == "respuesta del agente"
 
 
-async def test_reply_carries_citations_and_context_note_is_forwarded(db_pool, monkeypatch):
+async def test_telegram_reply_has_no_citations_and_context_note_is_forwarded(db_pool, monkeypatch):
     from app.handlers import execute_turn
 
     seen = {}
@@ -136,9 +136,7 @@ async def test_reply_carries_citations_and_context_note_is_forwarded(db_pool, mo
     token, _ = await service.create_link_token("tenant_a", "user_a", ())
     await handle_message(_msg(f"/start {token}"), trace_id="t-1")
     reply = await handle_message(_msg("hola"), trace_id="t-cit")
-    assert [(c.source, c.retrieved_at.year, c.detail) for c in reply.citations] == [
-        ("orion", 2026, None)
-    ]
+    assert reply.citations == ()
     assert seen["note"] is None
     ctx = await service.resolve_session("telegram", "42", "t-4")
     await execute_turn(ctx, "hola", "t-5", context_note="Parcel: P1")

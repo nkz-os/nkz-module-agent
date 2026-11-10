@@ -12,18 +12,11 @@ import logging
 from app.domain.session import SessionContext
 from app.handlers import execute_turn
 from app.mobile import turns
-from app.tools.catalog import Citation
 
 logger = logging.getLogger(__name__)
 
 
 def _citation_dict(c) -> dict:
-    if isinstance(c, Citation):
-        return {
-            "source": c.source,
-            "retrieved_at": c.retrieved_at.isoformat(),
-            "detail": c.detail,
-        }
     if isinstance(c, dict):
         return c
     if dataclasses.is_dataclass(c):

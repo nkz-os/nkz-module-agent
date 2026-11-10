@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime
 
 from app.agent.budget import TurnBudget
 from app.agent.loop import TurnResult, run_turn
@@ -26,7 +25,7 @@ from app.agent.quota import check_and_count
 from app.audit.repository import record_turn
 from app.channels.telegram import start_payload
 from app.config import get_settings
-from app.domain.messages import Citation, InboundMessage, OutboundMessage
+from app.domain.messages import InboundMessage, OutboundMessage
 from app.domain.session import SessionContext
 from app.identity import repository as repo
 from app.identity import service
@@ -174,14 +173,4 @@ async def handle_message(msg: InboundMessage, trace_id: str) -> OutboundMessage:
 
     result = await execute_turn(session, msg.text or "", trace_id)
 
-    return OutboundMessage(
-        text=result.text,
-        citations=tuple(
-            Citation(
-                source=c["source"],
-                retrieved_at=datetime.fromisoformat(c["retrieved_at"]),
-                detail=c.get("detail"),
-            )
-            for c in result.citations
-        ),
-    )
+    return OutboundMessage(text=result.text)

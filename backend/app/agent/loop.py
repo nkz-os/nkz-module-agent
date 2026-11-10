@@ -394,14 +394,16 @@ async def _dispatch_call(
         # returns something that is not a ToolResult is a tool error, not a
         # lost turn.
         if result.ok:
-            if collected is not None:
-                collected.extend(_citation_dicts(result.citations))
             if max_chars < _MIN_TOOL_RESULT_CHARS:
                 logger.warning(
                     "tool_result_omitted tenant_id=%s tool=%s room_chars=%d",
                     ctx.tenant_id, tool.name, max_chars,
                 )
             body = _serialize_payload(result.payload, result.citations, max_chars)
+            if collected is not None:
+                for cit in _citation_dicts(result.citations):
+                    if cit not in collected:
+                        collected.append(cit)
         else:
             # The reason is the adapter's own, never a fabricated payload.
             body = f"unavailable: {result.unavailable_reason or ''}"
