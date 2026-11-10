@@ -75,6 +75,9 @@ class ToolDefinition:
     # not offer the tool at all, instead of letting the model spend a paid
     # pass to learn it is unreachable.
     required_setting: str | None = None
+    # Seconds the loop waits for the handler; the loop caps it at a fixed
+    # ceiling and at the turn's remaining time.
+    timeout_s: float = 8.0
 
 
 def available_tools() -> tuple[ToolDefinition, ...]:
@@ -86,7 +89,18 @@ def available_tools() -> tuple[ToolDefinition, ...]:
     """
     # Imported lazily: adapters import catalog (for Citation/ToolResult), so a
     # module-level import here would be a cycle. This function is the seam.
-    from app.tools.adapters import bioorch, cue, orion, timeseries, weather
+    from app.tools.adapters import (
+        bioorch,
+        crop_health,
+        cue,
+        field_ops,
+        mobile_api,
+        orion,
+        risk,
+        timeseries,
+        vegetation,
+        weather,
+    )
 
     return (
         orion.GET_PARCELS,
@@ -96,5 +110,12 @@ def available_tools() -> tuple[ToolDefinition, ...]:
         weather.GET_WEATHER_CONDITIONS,
         weather.GET_PARCEL_DAILY_WEATHER,
         bioorch.GET_CROP_TRIAL_EVIDENCE,
+        bioorch.GET_CEREAL_MILESTONES,
+        bioorch.GET_CROP_FIT,
         cue.CHECK_SUBSTANCE_AUTHORIZATION,
+        mobile_api.GET_PARCEL_STATE,
+        risk.GET_RISK_CATALOG,
+        field_ops.GET_OPERATION_HISTORY,
+        crop_health.GET_VIGOUR_ZONES,
+        vegetation.GET_VEGETATION_TREND,
     )

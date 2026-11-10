@@ -44,6 +44,7 @@ CORE_NAMES = {
     "get_parcel_snapshot",
     "get_timeseries",
     "get_parcel_daily_weather",
+    "get_parcel_state",
 }
 
 
@@ -178,7 +179,14 @@ async def test_cache_expires_after_ttl(db_pool, monkeypatch):
         ("WEATHER_MAP_URL", "get_weather_conditions", "weather-map"),
         ("WEATHER_API_URL", "get_parcel_daily_weather", None),
         ("BIOORCH_API_URL", "get_crop_trial_evidence", "bioorchestrator"),
+        ("BIOORCH_API_URL", "get_cereal_milestones", "bioorchestrator"),
+        ("BIOORCH_API_URL", "get_crop_fit", "bioorchestrator"),
         ("CUE_API_URL", "check_substance_authorization", "cue"),
+        ("MOBILE_API_URL", "get_parcel_state", None),
+        ("RISK_URL", "get_risk_catalog", "risk"),
+        ("FIELD_OPS_URL", "get_operation_history", "field-operations"),
+        ("CROP_HEALTH_URL", "get_vigour_zones", "crop-health"),
+        ("VEGETATION_URL", "get_vegetation_trend", "vegetation-prime"),
     ],
 )
 async def test_unconfigured_url_hides_the_tool(db_pool, monkeypatch, env, tool, module):
@@ -211,4 +219,31 @@ async def test_fail_open_subset_is_core_intersect_configured(db_pool, monkeypatc
         "get_parcels",
         "get_parcel_snapshot",
         "get_parcel_daily_weather",
+        "get_parcel_state",
     }
+
+
+async def test_tool_with_empty_url_setting_is_not_offered(db_pool, monkeypatch):
+    from app.config import get_settings
+
+    tool = ToolDefinition(
+        name="fake_crop_health_tool",
+        description="synthetic",
+        args_model=_Args,
+        handler=_handler,
+        required_module=None,
+        required_setting="crop_health_url",
+    )
+    monkeypatch.setattr(
+        registry, "available_tools", lambda: available_tools() + (tool,)
+    )
+
+    monkeypatch.setenv("CROP_HEALTH_URL", "http://service.invalid")
+    get_settings.cache_clear()
+    registry.clear_cache()
+    assert "fake_crop_health_tool" in {t.name for t in await registry.tools_for("tenant_ch")}
+
+    monkeypatch.setenv("CROP_HEALTH_URL", "")
+    get_settings.cache_clear()
+    registry.clear_cache()
+    assert "fake_crop_health_tool" not in {t.name for t in await registry.tools_for("tenant_ch")}

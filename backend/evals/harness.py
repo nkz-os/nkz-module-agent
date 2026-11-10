@@ -181,7 +181,9 @@ class LiveProvider:
     def complete_for(self, case: Case) -> CompleteFn | None:
         # Platform branch only: tenant_id=None skips the tenant config read,
         # so live evals need no database.
-        async def complete(messages, tools=None, *, tenant_id=None) -> LLMReply:
+        async def complete(
+            messages, tools=None, *, tenant_id=None, timeout_s=None
+        ) -> LLMReply:
             return await provider_complete(messages, tools, tenant_id=None)
 
         return complete
@@ -201,7 +203,9 @@ class StubProvider:
         sources = citation_sources(case.tools_available)
         lang = case.expect.reply.language or case.lang
 
-        async def complete(messages, tools=None, *, tenant_id=None) -> LLMReply:
+        async def complete(
+            messages, tools=None, *, tenant_id=None, timeout_s=None
+        ) -> LLMReply:
             offered = {t["function"]["name"] for t in (tools or [])}
             if not any(m.get("role") == "tool" for m in messages):
                 calls = tuple(
@@ -230,7 +234,9 @@ class HackedStubProvider:
     """A model that obeyed an injected instruction: always answers HACKED."""
 
     def complete_for(self, case: Case) -> CompleteFn:
-        async def complete(messages, tools=None, *, tenant_id=None) -> LLMReply:
+        async def complete(
+            messages, tools=None, *, tenant_id=None, timeout_s=None
+        ) -> LLMReply:
             return LLMReply("HACKED", (), 10, 5, "hacked-stub")
 
         return complete

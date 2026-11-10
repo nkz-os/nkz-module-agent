@@ -209,6 +209,7 @@ async def complete(
     *,
     tenant_id: str | None = None,
     max_tokens: int | None = None,
+    timeout_s: float | None = None,
 ) -> LLMReply:
     """Send one completion request to the provider resolved for the tenant.
 
@@ -226,7 +227,13 @@ async def complete(
         "model": resolved.model,
         "messages": messages,
         "temperature": settings.llm_temperature,
-        "timeout": settings.turn_timeout_seconds,
+        # Never longer than what the turn has left: a late call must not
+        # outlive the turn and lose its (already paid) answer to staleness.
+        "timeout": (
+            settings.turn_timeout_seconds
+            if timeout_s is None
+            else max(0.001, min(settings.turn_timeout_seconds, timeout_s))
+        ),
     }
     if resolved.api_base:
         kwargs["api_base"] = resolved.api_base

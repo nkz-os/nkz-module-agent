@@ -91,12 +91,66 @@ def test_last4():
     assert keys.last4("  sk-xyz9 \n") == "xyz9"
 
 
+def _no_reaper(monkeypatch):
+    async def reaper(max_age):
+        return 0
+
+    monkeypatch.setattr("app.main.mobile_turns.expire_orphans", reaper)
+
+
+@pytest.mark.asyncio
+async def test_startup_expires_orphan_mobile_turns(monkeypatch):
+    from app.config import get_settings
+    from app.main import create_app, lifespan
+
+    seen = []
+
+    async def reaper(max_age):
+        seen.append(max_age)
+        return 2
+
+    monkeypatch.setattr("app.main.mobile_turns.expire_orphans", reaper)
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://u:p@localhost/db")
+    get_settings.cache_clear()
+    async with lifespan(create_app()):
+        pass
+    s = get_settings()
+    from app.mobile.turns import orphan_max_age
+
+    assert seen == [orphan_max_age(s)]
+    assert orphan_max_age(s) == (
+        s.turn_timeout_seconds + 15 + s.mobile_turn_orphan_grace_seconds
+    )
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_startup_survives_a_failing_orphan_reaper(monkeypatch, caplog):
+    import logging
+
+    from app.main import create_app, lifespan
+
+    async def reaper(max_age):
+        raise RuntimeError("relation agent_mobile_turns does not exist")
+
+    monkeypatch.setattr("app.main.mobile_turns.expire_orphans", reaper)
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://u:p@localhost/db")
+    with caplog.at_level(logging.CRITICAL, logger="app.main"):
+        async with lifespan(create_app()):
+            pass
+    assert any(
+        r.levelno == logging.CRITICAL and "mobile_turns_reaper_failed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
 @pytest.mark.asyncio
 async def test_startup_logs_critical_without_keys_and_does_not_exit(monkeypatch, caplog):
     import logging
 
     from app.main import create_app, lifespan
 
+    _no_reaper(monkeypatch)
     monkeypatch.setenv("POSTGRES_URL", "postgresql://u:p@localhost/db")
     _set_keys(monkeypatch, "")
     app = create_app()
@@ -112,6 +166,7 @@ async def test_startup_silent_with_keys(monkeypatch, caplog):
 
     from app.main import create_app, lifespan
 
+    _no_reaper(monkeypatch)
     monkeypatch.setenv("POSTGRES_URL", "postgresql://u:p@localhost/db")
     _set_keys(monkeypatch, Fernet.generate_key().decode())
     app = create_app()

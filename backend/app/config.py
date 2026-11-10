@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     weather_api_url: str = ""
     bioorch_api_url: str = ""
     cue_api_url: str = ""
+    crop_health_url: str = ""
+    field_ops_url: str = ""
+    vegetation_url: str = ""
+    mobile_api_url: str = ""
+    risk_url: str = ""
 
     # Account linking
     link_token_ttl_seconds: int = 600
@@ -94,17 +99,24 @@ class Settings(BaseSettings):
     # public endpoint is unbounded spend and unbounded latency.
     max_iterations: int = 4
     max_tool_calls: int = 8
-    max_tokens_per_turn: int = 4000
+    # The default must cover the spec cost of the full tool catalogue, paid on every pass.
+    max_tokens_per_turn: int = 8000
     # Platform ceiling on a tenant's per-turn token budget. Reads
     # MAX_TOKENS_PER_TURN_CEILING; falls back to the legacy MAX_TOKENS_PER_TURN
     # so existing deployments keep their value.
     max_tokens_per_turn_ceiling: int = Field(
-        default=4000,
+        default=8000,
         validation_alias=AliasChoices(
             "MAX_TOKENS_PER_TURN_CEILING", "MAX_TOKENS_PER_TURN"
         ),
     )
     turn_timeout_seconds: int = 45
+
+    # Mobile channel: grace added to turn_timeout before the orphan reaper
+    # fails a queued/running row; history page cap; max user text length.
+    mobile_turn_orphan_grace_seconds: int = 15
+    mobile_history_limit: int = 50
+    mobile_text_max_chars: int = 2000
 
     # Tool registry: how long one tenant's installed-module intersection is
     # cached in memory before the next turn re-reads public.module_installations.

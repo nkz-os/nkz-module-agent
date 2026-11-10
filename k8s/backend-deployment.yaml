@@ -131,6 +131,16 @@ spec:
               value: ""
             - name: CUE_API_URL
               value: ""
+            - name: CROP_HEALTH_URL
+              value: ""
+            - name: FIELD_OPS_URL
+              value: ""
+            - name: VEGETATION_URL
+              value: ""
+            - name: MOBILE_API_URL
+              value: ""
+            - name: RISK_URL
+              value: ""
             # Shared with api-gateway/entity-manager; the production value
             # lives in the cluster secret.
             - name: HMAC_SECRET
@@ -191,11 +201,17 @@ spec:
             - name: MAX_TOOL_CALLS
               value: "8"
             - name: MAX_TOKENS_PER_TURN
-              value: "4000"
+              value: "8000"
             - name: MAX_TOKENS_PER_TURN_CEILING
-              value: "4000"
+              value: "8000"
             - name: TURN_TIMEOUT_SECONDS
               value: "45"
+            - name: MOBILE_TURN_ORPHAN_GRACE_SECONDS
+              value: "15"
+            - name: MOBILE_HISTORY_LIMIT
+              value: "50"
+            - name: MOBILE_TEXT_MAX_CHARS
+              value: "2000"
             # Spend caps — finite by default (money on a public route).
             - name: MAX_TURNS_PER_TENANT_DAY
               value: "500"

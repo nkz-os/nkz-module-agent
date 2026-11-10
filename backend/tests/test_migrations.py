@@ -26,6 +26,7 @@ from tests.conftest import (
     MIGRATION_002,
     MIGRATION_003,
     MIGRATION_004,
+    MIGRATION_005,
     PLATFORM_ROLE_SQL,
     requires_db,
 )
@@ -379,7 +380,7 @@ async def test_identity_tables_work_for_module_role():
 
 async def _apply_all(conn: asyncpg.Connection) -> None:
     await conn.execute(PLATFORM_ROLE_SQL)
-    for m in (MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004):
+    for m in (MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004, MIGRATION_005):
         await conn.execute(m.read_text())
 
 
@@ -484,6 +485,32 @@ async def test_004_rerun_is_a_noop():
         owner = await conn.fetchval(
             "SELECT pg_get_userbyid(relowner) FROM pg_class "
             "WHERE oid = 'agent_module.tenant_llm_configs'::regclass"
+        )
+        assert owner == MODULE_ROLE
+    finally:
+        await conn.close()
+
+
+@requires_db
+@pytest.mark.asyncio
+async def test_005_rerun_is_a_noop_and_owned_by_module_role():
+    conn = await asyncpg.connect(DSN)
+    try:
+        await _clean_slate(conn)
+        await _apply_all(conn)
+        await conn.execute(
+            "INSERT INTO agent_module.agent_mobile_turns "
+            "(tenant_id, user_id, client_turn_id, text, state, trace_id) "
+            "VALUES ('tenant-a','u1','c1','hi','queued','t1')"
+        )
+        await conn.execute(MIGRATION_005.read_text())
+        await conn.execute(MIGRATION_005.read_text())
+        assert await conn.fetchval(
+            "SELECT count(*) FROM agent_module.agent_mobile_turns"
+        ) == 1
+        owner = await conn.fetchval(
+            "SELECT pg_get_userbyid(relowner) FROM pg_class "
+            "WHERE oid = 'agent_module.agent_mobile_turns'::regclass"
         )
         assert owner == MODULE_ROLE
     finally:

@@ -38,6 +38,7 @@ Design decisions (deliberate, documented for review):
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time, timedelta, timezone
 
 from app.config import get_settings
 from app.db import get_pool
@@ -99,3 +100,51 @@ async def check_and_count(
         return "tenant_daily"
 
     return None
+
+
+async def next_slot(
+    tenant_id: str, channel: str, channel_user_id: str
+) -> datetime:
+    """When a blocked account can try again (UTC).
+
+    Account hourly cap (checked first, same precedence as check_and_count): the
+    oldest counted row of the last hour leaves the window one hour after it was
+    written (also the answer when no cap blocks but rows exist). Tenant daily
+    cap: the next UTC midnight (a conservative bound; the
+    window is rolling, so it may free up earlier). No rows: now.
+    """
+    settings = get_settings()
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.current_tenant', $1, true)", tenant_id
+            )
+            per_account, oldest = await conn.fetchrow(
+                """
+                SELECT count(*), min(created_at) FROM agent_turn_audit
+                 WHERE tenant_id = $1 AND channel = $2 AND channel_user_id = $3
+                   AND created_at > now() - interval '1 hour'
+                   AND outcome <> 'refused' AND channel <> $4
+                """,
+                tenant_id, channel, channel_user_id, PANEL_CHANNEL,
+            )
+            per_tenant = await conn.fetchval(
+                """
+                SELECT count(*) FROM agent_turn_audit
+                 WHERE tenant_id = $1 AND created_at > now() - interval '1 day'
+                   AND outcome <> 'refused' AND channel <> $2
+                """,
+                tenant_id, PANEL_CHANNEL,
+            )
+
+    account_blocked = per_account >= settings.max_turns_per_account_hour
+    if not account_blocked and per_tenant >= settings.max_turns_per_tenant_day:
+        return datetime.combine(
+            now.date() + timedelta(days=1), time.min, tzinfo=timezone.utc
+        )
+    if oldest is None:
+        return now
+    return oldest.astimezone(timezone.utc) + timedelta(hours=1)

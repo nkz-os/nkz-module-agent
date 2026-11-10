@@ -33,7 +33,7 @@ def _voice() -> VoiceRef:
 def counters(monkeypatch):
     c = {"turn": 0, "quota": 0, "texts": []}
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         c["turn"] += 1
         c["texts"].append(text)
         return TurnResult(text="respuesta", outcome="ok", model="m", tool_calls=(),

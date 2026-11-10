@@ -20,15 +20,28 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_weather_conditions",
         "get_parcel_daily_weather",
         "get_crop_trial_evidence",
+        "get_cereal_milestones",
+        "get_crop_fit",
         "check_substance_authorization",
+        "get_parcel_state",
+        "get_risk_catalog",
+        "get_operation_history",
+        "get_vigour_zones",
+        "get_vegetation_trend",
     }
     # Core tools are not gated behind any installed module; the module-backed
     # adapters each carry the module id the registry filters on.
     gated = {t.name: t.required_module for t in tools if t.required_module}
     assert gated == {
         "get_active_alerts": "risk",
+        "get_risk_catalog": "risk",
+        "get_operation_history": "field-operations",
+        "get_vigour_zones": "crop-health",
+        "get_vegetation_trend": "vegetation-prime",
         "get_weather_conditions": "weather-map",
         "get_crop_trial_evidence": "bioorchestrator",
+        "get_cereal_milestones": "bioorchestrator",
+        "get_crop_fit": "bioorchestrator",
         "check_substance_authorization": "cue",
     }
     assert all(t.required_module is None for t in tools if t.name in {
@@ -39,13 +52,14 @@ def test_available_tools_exposes_core_and_module_tools():
 @pytest.mark.asyncio
 async def test_registry_exposes_core_tool_specs():
     specs = await registry.tool_specs("tenant_test")
-    assert len(specs) == 4
+    assert len(specs) == 5
     assert all(s["type"] == "function" for s in specs)
     assert {s["function"]["name"] for s in specs} == {
         "get_parcels",
         "get_parcel_snapshot",
         "get_timeseries",
         "get_parcel_daily_weather",
+        "get_parcel_state",
     }
     assert await registry.has_tools("tenant_test") is True
 

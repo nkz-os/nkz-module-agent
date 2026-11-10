@@ -191,6 +191,7 @@ class TurnResult:
     tokens_prompt: int
     tokens_completion: int
     llm_origin: str | None = None
+    citations: tuple[dict, ...] = ()
 
 
 def _failure_origin(exc: Exception, known: str | None) -> str:
@@ -202,7 +203,10 @@ def _failure_origin(exc: Exception, known: str | None) -> str:
 
 
 async def run_turn(
-    user_text: str, budget: TurnBudget, ctx: SessionContext
+    user_text: str,
+    budget: TurnBudget,
+    ctx: SessionContext,
+    context_note: str | None = None,
 ) -> TurnResult:
     """Turn one farmer message into one reply, inside `budget`.
 
@@ -216,6 +220,7 @@ async def run_turn(
     prompt_tokens = 0
     completion_tokens = 0
     seen_calls: list[dict] = []
+    turn_citations: list[dict] = []
 
     # The whole setup lives inside the turn's try: "nothing raises out of
     # here" is a structural invariant, not a happy-path hope. A broken
@@ -232,7 +237,7 @@ async def run_turn(
             "content": wrap_untrusted(_USER_MESSAGE_SOURCE, user_text),
         }
         tools = [registry.openai_spec(tool) for tool in tool_defs] or None
-        system_text = system_prompt(bool(tool_defs))
+        system_text = system_prompt(bool(tool_defs), context_note)
         system_message = {"role": "system", "content": system_text}
         memory_chars = _size_memory(budget, system_message, tools, user_message)
         messages: list[dict] = [
@@ -245,7 +250,10 @@ async def run_turn(
             budget.check_deadline()
             budget.spend_iteration()
 
-            reply = await complete(messages, tools=tools, tenant_id=ctx.tenant_id)
+            reply = await complete(
+                messages, tools=tools, tenant_id=ctx.tenant_id,
+                timeout_s=budget.remaining_seconds(),
+            )
             model = reply.model
             llm_origin = reply.origin
             prompt_tokens += reply.tokens_prompt
@@ -270,6 +278,7 @@ async def run_turn(
                     tokens_prompt=prompt_tokens,
                     tokens_completion=completion_tokens,
                     llm_origin=llm_origin,
+                    citations=tuple(turn_citations),
                 )
 
             # The model asked for tools: record its assistant message (with
@@ -293,7 +302,8 @@ async def run_turn(
                 budget.spend_tool_call()
                 messages.append(
                     await _dispatch_call(
-                        call, tools_by_name, ctx, per_call_chars, budget
+                        call, tools_by_name, ctx, per_call_chars, budget,
+                        turn_citations,
                     )
                 )
 
@@ -320,6 +330,7 @@ async def run_turn(
             tokens_prompt=prompt_tokens,
             tokens_completion=completion_tokens,
             llm_origin=llm_origin or "none",
+            citations=tuple(turn_citations),
         )
     except Exception as exc:
         # Anything else: a provider failure (LLMProviderError, already
@@ -345,6 +356,7 @@ async def _dispatch_call(
     ctx: SessionContext,
     max_chars: int = _FENCE_MAX_CHARS,
     budget: TurnBudget | None = None,
+    collected: list[dict] | None = None,
 ) -> dict:
     """Execute one model tool call into a ``role: tool`` result message.
 
@@ -376,7 +388,7 @@ async def _dispatch_call(
 
     # One tool must neither hold the turn past its deadline nor end it: a slow
     # or failing adapter becomes one "unavailable" result and the turn goes on.
-    timeout = _TOOL_TIMEOUT_SECONDS
+    timeout = min(tool.timeout_s, _TOOL_TIMEOUT_CEILING_SECONDS)
     if budget is not None:
         timeout = min(timeout, budget.remaining_seconds())
     try:
@@ -391,6 +403,10 @@ async def _dispatch_call(
                     ctx.tenant_id, tool.name, max_chars,
                 )
             body = _serialize_payload(result.payload, result.citations, max_chars)
+            if collected is not None:
+                for cit in _citation_dicts(result.citations):
+                    if cit not in collected:
+                        collected.append(cit)
         else:
             # The reason is the adapter's own, never a fabricated payload.
             body = f"unavailable: {result.unavailable_reason or ''}"
@@ -415,9 +431,9 @@ async def _dispatch_call(
 # would allow: the per-turn cap is min(budget-derived, 8000).
 _TRUNCATED_MARK = " …[truncated]"
 
-# Upper bound for one tool handler (design: tool timeouts <= 8 s); the turn's
-# remaining time can only shorten it.
-_TOOL_TIMEOUT_SECONDS = 8.0
+# Hard ceiling for one tool handler whatever its ToolDefinition.timeout_s
+# (default 8 s); the turn's remaining time can only shorten it further.
+_TOOL_TIMEOUT_CEILING_SECONDS = 15.0
 
 
 def _tool_label(name: object) -> str:

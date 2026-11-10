@@ -55,6 +55,11 @@ services:
       - WEATHER_API_URL=
       - BIOORCH_API_URL=
       - CUE_API_URL=
+      - CROP_HEALTH_URL=
+      - FIELD_OPS_URL=
+      - VEGETATION_URL=
+      - MOBILE_API_URL=
+      - RISK_URL=
       - HMAC_SECRET=dev-only-hmac-change-me
       # Language model — per-deployment, empty by default (config.py). Unset
       # is NOT a crash: the module starts, logs CRITICAL and answers with a
@@ -70,9 +75,12 @@ services:
       # Hard per-turn budget + spend caps (config.py defaults echoed here).
       - MAX_ITERATIONS=4
       - MAX_TOOL_CALLS=8
-      - MAX_TOKENS_PER_TURN=4000
-      - MAX_TOKENS_PER_TURN_CEILING=4000
+      - MAX_TOKENS_PER_TURN=8000
+      - MAX_TOKENS_PER_TURN_CEILING=8000
       - TURN_TIMEOUT_SECONDS=45
+      - MOBILE_TURN_ORPHAN_GRACE_SECONDS=15
+      - MOBILE_HISTORY_LIMIT=50
+      - MOBILE_TEXT_MAX_CHARS=2000
       - MAX_TURNS_PER_TENANT_DAY=500
       - MAX_TURNS_PER_ACCOUNT_HOUR=15
     depends_on:

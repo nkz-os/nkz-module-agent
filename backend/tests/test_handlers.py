@@ -108,7 +108,7 @@ async def test_unlink_cannot_revoke_another_tenants_link(db_pool):
 
 
 async def test_linked_user_gets_an_agent_reply(db_pool, monkeypatch):
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         return TurnResult("respuesta del agente", "ok", "m", (), 1, 1)
 
     monkeypatch.setattr("app.handlers.run_turn", fake_turn)
@@ -119,8 +119,32 @@ async def test_linked_user_gets_an_agent_reply(db_pool, monkeypatch):
     assert reply.text == "respuesta del agente"
 
 
+async def test_telegram_reply_has_no_citations_and_context_note_is_forwarded(db_pool, monkeypatch):
+    from app.handlers import execute_turn
+
+    seen = {}
+
+    async def fake_turn(text, budget, ctx, context_note=None):
+        seen["note"] = context_note
+        return TurnResult(
+            "r", "ok", "m", (), 1, 1,
+            citations=({"source": "orion", "retrieved_at": "2026-01-02T00:00:00+00:00",
+                        "detail": None},),
+        )
+
+    monkeypatch.setattr("app.handlers.run_turn", fake_turn)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    reply = await handle_message(_msg("hola"), trace_id="t-cit")
+    assert reply.citations == ()
+    assert seen["note"] is None
+    ctx = await service.resolve_session("telegram", "42", "t-4")
+    await execute_turn(ctx, "hola", "t-5", context_note="Parcel: P1")
+    assert seen["note"] == "Parcel: P1"
+
+
 async def test_every_turn_is_audited(db_pool, monkeypatch):
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         return TurnResult("ok", "ok", "m", (), 1, 1)
 
     monkeypatch.setattr("app.handlers.run_turn", fake_turn)
@@ -142,7 +166,7 @@ async def test_quota_block_short_circuits_before_the_model(db_pool, monkeypatch)
     """
     called = {"n": 0}
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         called["n"] += 1
         return TurnResult("no debería", "ok", "m", (), 1, 1)
 
@@ -163,7 +187,7 @@ async def test_unlinked_user_never_reaches_the_model(db_pool, monkeypatch):
     """The oldest cost gate in this module, now with money behind it."""
     called = {"n": 0}
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         called["n"] += 1
         return TurnResult("no", "ok", "m", (), 1, 1)
 
@@ -182,7 +206,7 @@ async def test_settings_map_to_the_turn_budget(db_pool, monkeypatch, clear_setti
     every behavioural test, so the budget object itself is inspected."""
     seen = {}
 
-    async def capture_budget(text, budget, ctx):
+    async def capture_budget(text, budget, ctx, context_note=None):
         seen["budget"] = budget
         return TurnResult("ok", "ok", "m", (), 1, 1)
 
@@ -210,7 +234,7 @@ async def test_blocked_turn_leaves_no_audit_row(db_pool, monkeypatch):
     async def always_blocked(*a, **k):
         return "tenant_daily"
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         return TurnResult("no", "ok", "m", (), 1, 1)
 
     monkeypatch.setattr("app.handlers.check_and_count", always_blocked)
@@ -234,7 +258,7 @@ async def test_handled_turn_records_a_full_audit_row(db_pool, monkeypatch):
     latency_ms=0 in the wiring would otherwise satisfy a `>= 0` assertion
     and the mutation would survive.
     """
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         await asyncio.sleep(0.02)
         return TurnResult("respuesta", "ok", "model-1", (), 10, 5)
 
@@ -284,7 +308,7 @@ async def test_latency_clock_is_monotonic_by_provenance(db_pool, monkeypatch):
 
     monkeypatch.setattr(handlers, "time", FakeClock())
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         return TurnResult("respuesta", "ok", "model-1", (), 10, 5)
 
     monkeypatch.setattr("app.handlers.run_turn", fake_turn)
@@ -304,7 +328,7 @@ async def test_audit_failure_keeps_reply_and_hides_message_text(
     leak the farmer's message text into the logs."""
     canary = "CANARY-9f3a-do-not-log-this-text"
 
-    async def fake_turn(text, budget, ctx):
+    async def fake_turn(text, budget, ctx, context_note=None):
         return TurnResult("ok", "ok", "m", (), 1, 1)
 
     async def broken_pool():
@@ -328,7 +352,7 @@ async def test_audit_failure_keeps_reply_and_hides_message_text(
 async def _budget_for_tenant(monkeypatch, get_impl):
     seen = {}
 
-    async def capture_budget(text, budget, ctx):
+    async def capture_budget(text, budget, ctx, context_note=None):
         seen["budget"] = budget
         return TurnResult("ok", "ok", "m", (), 1, 1)
 
@@ -384,3 +408,42 @@ async def test_config_lookup_error_falls_back_to_ceiling(
         budget = await _budget_for_tenant(monkeypatch, boom)
     assert budget._max_tokens == 4000
     assert any(r.levelno == logging.WARNING and "budget" in r.getMessage() for r in caplog.records)
+
+
+async def test_code_default_ceiling_is_8000(monkeypatch, clear_settings_cache):
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN_CEILING", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().max_tokens_per_turn == 8000
+    assert get_settings().max_tokens_per_turn_ceiling == 8000
+
+
+async def test_no_tenant_config_uses_ceiling_16000(
+    db_pool, monkeypatch, clear_settings_cache
+):
+    async def none_get(tenant_id):
+        return None
+
+    seen = {}
+
+    async def capture(text, budget, ctx, context_note=None):
+        seen["budget"] = budget
+        return TurnResult("ok", "ok", "m", (), 1, 1)
+
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "16000")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.handlers.run_turn", capture)
+    monkeypatch.setattr("app.handlers.configs.get", none_get)
+    token, _ = await service.create_link_token("tenant_a", "user_a", ())
+    await handle_message(_msg(f"/start {token}"), trace_id="t-1")
+    await handle_message(_msg("hola"), trace_id="t-a")
+    assert seen["budget"]._max_tokens == 16000
+
+
+async def test_tenant_config_below_ceiling_wins_over_default(
+    db_pool, monkeypatch, clear_settings_cache
+):
+    monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
+    budget = await _budget_for_tenant(monkeypatch, _cfg(1500))
+    assert budget._max_tokens == 1500
