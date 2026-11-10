@@ -94,8 +94,8 @@ async def execute_turn(
     """
     settings = get_settings()
     ceiling = settings.max_tokens_per_turn_ceiling
-    # Production sets the ceiling by env; the code defaults are the fallback.
-    max_tokens = min(settings.max_tokens_per_turn, ceiling)
+    # Production sets only the ceiling by env: it is the default budget.
+    max_tokens = ceiling
     try:
         cfg = await configs.get(session.tenant_id)
         if cfg is not None and cfg.max_tokens_per_turn:

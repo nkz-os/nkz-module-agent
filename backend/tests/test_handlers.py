@@ -418,7 +418,7 @@ async def test_code_default_ceiling_is_8000(monkeypatch, clear_settings_cache):
     assert get_settings().max_tokens_per_turn_ceiling == 8000
 
 
-async def test_default_budget_is_not_the_ceiling_when_lower(
+async def test_no_tenant_config_uses_ceiling_16000(
     db_pool, monkeypatch, clear_settings_cache
 ):
     async def none_get(tenant_id):
@@ -431,14 +431,14 @@ async def test_default_budget_is_not_the_ceiling_when_lower(
         return TurnResult("ok", "ok", "m", (), 1, 1)
 
     monkeypatch.delenv("MAX_TOKENS_PER_TURN", raising=False)
-    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "8000")
+    monkeypatch.setenv("MAX_TOKENS_PER_TURN_CEILING", "16000")
     get_settings.cache_clear()
     monkeypatch.setattr("app.handlers.run_turn", capture)
     monkeypatch.setattr("app.handlers.configs.get", none_get)
     token, _ = await service.create_link_token("tenant_a", "user_a", ())
     await handle_message(_msg(f"/start {token}"), trace_id="t-1")
     await handle_message(_msg("hola"), trace_id="t-a")
-    assert seen["budget"]._max_tokens == get_settings().max_tokens_per_turn == 8000
+    assert seen["budget"]._max_tokens == 16000
 
 
 async def test_tenant_config_below_ceiling_wins_over_default(
