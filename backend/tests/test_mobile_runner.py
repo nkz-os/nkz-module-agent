@@ -26,6 +26,7 @@ def calls(monkeypatch):
 
     async def running(turn_id):
         log.append(("running", turn_id))
+        return True
 
     async def done(turn_id, reply_text, citations, outcome):
         log.append(("done", turn_id, reply_text, citations, outcome))
@@ -114,3 +115,17 @@ async def test_exception_marks_failed_and_never_raises(monkeypatch, calls):
     monkeypatch.setattr(runner, "execute_turn", boom)
     await runner.run_mobile_turn("t1", CTX, "q", None)
     assert calls[-1] == ("failed", "t1", "error", None)
+
+
+async def test_not_queued_skips_the_model_call(monkeypatch, calls):
+    async def running(turn_id):
+        calls.append(("running", turn_id))
+        return False
+
+    async def fake(session, text, trace_id):
+        raise AssertionError("model must not be called")
+
+    monkeypatch.setattr(runner.turns, "mark_running", running)
+    monkeypatch.setattr(runner, "execute_turn", fake)
+    await runner.run_mobile_turn("t1", CTX, "q", None)
+    assert calls == [("running", "t1")]

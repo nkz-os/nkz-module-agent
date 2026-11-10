@@ -69,3 +69,20 @@ async def test_expire_orphans_fails_running_rows(db_pool):
     assert row.state == "failed" and row.error_code == "interrupted"
     assert row.finished_at is not None
     assert await turns.expire_orphans(0) == 0
+
+
+async def test_mark_running_returns_true_only_from_queued(db_pool):
+    t, _ = await _make("rt1")
+    assert await turns.mark_running(t.turn_id) is True
+    assert await turns.mark_running(t.turn_id) is False
+
+
+async def test_terminal_state_is_never_overwritten(db_pool):
+    t, _ = await _make("rt2")
+    await turns.mark_failed(t.turn_id, "interrupted", None)
+    await turns.mark_done(t.turn_id, "late", [], "ok")
+    got = await turns.get_turn(t.tenant_id, t.user_id, t.turn_id)
+    assert got.state == "failed" and got.reply_text is None
+    await turns.mark_failed(t.turn_id, "error", None)
+    got = await turns.get_turn(t.tenant_id, t.user_id, t.turn_id)
+    assert got.error_code == "interrupted"

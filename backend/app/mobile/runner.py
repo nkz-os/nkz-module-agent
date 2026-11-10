@@ -36,7 +36,13 @@ async def run_mobile_turn(
 ) -> None:
     """Run the turn and persist its outcome. Never raises."""
     try:
-        await turns.mark_running(turn_id)
+        if not await turns.mark_running(turn_id):
+            # Not queued any more (reaped or already picked up): spend nothing.
+            logger.warning(
+                "mobile_turn_not_queued turn_id=%s tenant_id=%s trace_id=%s",
+                turn_id, ctx.tenant_id, ctx.trace_id,
+            )
+            return
         # Task 4 replaces this prefix with execute_turn(..., context_note=...).
         full_text = f"{parcel_context}\n\n{text}" if parcel_context is not None else text
         result = await execute_turn(ctx, full_text, ctx.trace_id)

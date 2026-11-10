@@ -154,16 +154,19 @@ async def list_history(tenant_id: str, user_id: str, limit: int) -> list[MobileT
     return [_row(r) for r in rows]
 
 
-async def mark_running(turn_id: str) -> None:
+async def mark_running(turn_id: str) -> bool:
+    """True when this call moved the row queued -> running."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        row = await conn.fetchrow(
             """
             UPDATE agent_mobile_turns SET state = 'running', started_at = now()
              WHERE turn_id = $1 AND state = 'queued'
+            RETURNING turn_id
             """,
             _as_uuid(turn_id),
         )
+    return row is not None
 
 
 async def mark_done(
@@ -176,7 +179,7 @@ async def mark_done(
             UPDATE agent_mobile_turns
                SET state = 'done', reply_text = $2, citations = $3::jsonb,
                    outcome = $4, finished_at = now()
-             WHERE turn_id = $1
+             WHERE turn_id = $1 AND state IN ('queued', 'running')
             """,
             _as_uuid(turn_id), reply_text, json.dumps(citations), outcome,
         )
@@ -190,7 +193,7 @@ async def mark_failed(turn_id: str, error_code: str, outcome: str | None) -> Non
             UPDATE agent_mobile_turns
                SET state = 'failed', error_code = $2, outcome = $3,
                    finished_at = now()
-             WHERE turn_id = $1
+             WHERE turn_id = $1 AND state IN ('queued', 'running')
             """,
             _as_uuid(turn_id), error_code, outcome,
         )
