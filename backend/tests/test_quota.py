@@ -233,3 +233,46 @@ async def test_non_panel_rows_still_count_next_to_panel_rows(db_pool, monkeypatc
     await _seed(db_pool, 3)
     assert await check_and_count("tenant_a", "telegram", "99") == "tenant_daily"
     get_settings.cache_clear()
+
+
+# --- next_slot ------------------------------------------------------------------
+
+
+async def _seed_at(db_pool, minutes_ago, tag, tenant="tenant_a", acct="42"):
+    async with db_pool.acquire() as c:
+        await c.execute(
+            """INSERT INTO agent_turn_audit
+               (trace_id, tenant_id, user_id, channel, channel_user_id,
+                outcome, created_at)
+               VALUES ($1,$2,'u','telegram',$3,'ok',
+                       now() - ($4 || ' minutes')::interval)""",
+            f"slot-{tag}", tenant, acct, str(minutes_ago),
+        )
+
+
+async def test_next_slot_is_oldest_counted_row_plus_one_hour(db_pool):
+    from datetime import datetime, timedelta, timezone
+
+    from app.agent.quota import next_slot
+
+    await _seed_at(db_pool, 50, "a")
+    await _seed_at(db_pool, 10, "b")
+    slot = await next_slot("tenant_a", "telegram", "42")
+    expected = datetime.now(timezone.utc) + timedelta(minutes=10)
+    assert abs((slot - expected).total_seconds()) < 5
+    assert slot.tzinfo is not None
+
+
+async def test_next_slot_daily_cap_is_next_midnight_utc(db_pool, monkeypatch):
+    from datetime import datetime, time, timedelta, timezone
+
+    from app.agent.quota import next_slot
+
+    monkeypatch.setenv("MAX_TURNS_PER_TENANT_DAY", "1")
+    get_settings.cache_clear()
+    await _seed_at(db_pool, 5, "c", acct="other")
+    slot = await next_slot("tenant_a", "telegram", "42")
+    today = datetime.now(timezone.utc).date()
+    expected = datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    assert slot == expected
+    get_settings.cache_clear()
