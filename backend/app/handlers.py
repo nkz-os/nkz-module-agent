@@ -26,6 +26,7 @@ from app.audit.repository import record_turn
 from app.channels.telegram import start_payload
 from app.config import get_settings
 from app.domain.messages import InboundMessage, OutboundMessage
+from app.domain.session import SessionContext
 from app.identity import repository as repo
 from app.identity import service
 from app.llm import configs
@@ -80,6 +81,42 @@ async def _refuse(
     return OutboundMessage(text=reply)
 
 
+async def execute_turn(
+    session: SessionContext, text: str, trace_id: str
+) -> TurnResult:
+    """Budget lookup, model loop and audit row for one already-admitted turn.
+
+    Shared by every channel; the caller owns identity resolution and the quota
+    check, which must run before this (it is the spend).
+    """
+    settings = get_settings()
+    ceiling = settings.max_tokens_per_turn_ceiling
+    max_tokens = ceiling
+    try:
+        cfg = await configs.get(session.tenant_id)
+        if cfg is not None and cfg.max_tokens_per_turn:
+            max_tokens = min(cfg.max_tokens_per_turn, ceiling)
+    except Exception:
+        # Never fail the turn over the budget lookup; the resolver surfaces
+        # the real error. No key material is involved here.
+        logger.warning(
+            "turn_budget_lookup_failed tenant_id=%s trace_id=%s: using ceiling",
+            session.tenant_id, trace_id,
+        )
+    budget = TurnBudget(
+        max_iterations=settings.max_iterations,
+        max_tool_calls=settings.max_tool_calls,
+        max_tokens=max_tokens,
+        timeout_s=settings.turn_timeout_seconds,
+    )
+    started = time.monotonic()
+    result = await run_turn(text, budget, session)
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    await record_turn(session, text, result, latency_ms, trace_id)
+    return result
+
+
 async def handle_message(msg: InboundMessage, trace_id: str) -> OutboundMessage:
     has_text = bool(msg.text and msg.text.strip())
     token = start_payload(msg) if has_text else None
@@ -131,30 +168,6 @@ async def handle_message(msg: InboundMessage, trace_id: str) -> OutboundMessage:
         # calling it and then refusing would spend exactly what it saves.
         return OutboundMessage(text=QUOTA_TEXT)
 
-    settings = get_settings()
-    ceiling = settings.max_tokens_per_turn_ceiling
-    max_tokens = ceiling
-    try:
-        cfg = await configs.get(session.tenant_id)
-        if cfg is not None and cfg.max_tokens_per_turn:
-            max_tokens = min(cfg.max_tokens_per_turn, ceiling)
-    except Exception:
-        # Never fail the turn over the budget lookup; the resolver surfaces
-        # the real error. No key material is involved here.
-        logger.warning(
-            "turn_budget_lookup_failed tenant_id=%s trace_id=%s: using ceiling",
-            session.tenant_id, trace_id,
-        )
-    budget = TurnBudget(
-        max_iterations=settings.max_iterations,
-        max_tool_calls=settings.max_tool_calls,
-        max_tokens=max_tokens,
-        timeout_s=settings.turn_timeout_seconds,
-    )
-    started = time.monotonic()
-    result = await run_turn(msg.text or "", budget, session)
-    latency_ms = int((time.monotonic() - started) * 1000)
-
-    await record_turn(session, msg.text, result, latency_ms, trace_id)
+    result = await execute_turn(session, msg.text or "", trace_id)
 
     return OutboundMessage(text=result.text)
