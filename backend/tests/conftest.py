@@ -32,6 +32,7 @@ MIGRATION_001 = MIGRATIONS / "001_agent_schema.sql"
 MIGRATION_002 = MIGRATIONS / "002_agent_turn_audit.sql"
 MIGRATION_003 = MIGRATIONS / "003_conversation_state.sql"
 MIGRATION_004 = MIGRATIONS / "004_tenant_llm_configs.sql"
+MIGRATION_005 = MIGRATIONS / "005_mobile_turns.sql"
 
 PLATFORM_ROLE_SQL = """
 DO $$ BEGIN
@@ -78,6 +79,7 @@ async def db_pool():
         await conn.execute(MIGRATION_002.read_text())
         await conn.execute(MIGRATION_003.read_text())
         await conn.execute(MIGRATION_004.read_text())
+        await conn.execute(MIGRATION_005.read_text())
         # The platform's shared module-installations view does not exist in the
         # test database; a plain public table with the same four columns stands
         # in for it (registry.py reads exactly these four).
@@ -90,7 +92,7 @@ async def db_pool():
         await conn.execute(
             "TRUNCATE agent_channel_links, agent_link_tokens, agent_processed_updates, "
             "agent_turn_audit, agent_conversation_state, tenant_llm_configs, "
-            "public.module_installations"
+            "agent_mobile_turns, public.module_installations"
         )
     yield pool
     await pool.close()
