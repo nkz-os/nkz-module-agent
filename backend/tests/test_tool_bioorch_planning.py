@@ -133,11 +133,11 @@ async def test_fit_campaign_year_is_the_end_year(monkeypatch):
     assert res.payload["campaign_label"] == "2026/27"
 
 
-def test_default_campaign_year_rolls_over_in_july():
+def test_default_campaign_year_rolls_over_in_august():
     from datetime import date
 
-    assert bioorch._default_campaign_year(date(2026, 6, 30)) == 2026
-    assert bioorch._default_campaign_year(date(2026, 7, 1)) == 2027
+    assert bioorch._default_campaign_year(date(2026, 7, 31)) == 2026
+    assert bioorch._default_campaign_year(date(2026, 8, 1)) == 2027
     assert bioorch._default_campaign_year(date(2026, 11, 10)) == 2027
 
 
@@ -245,3 +245,13 @@ def test_registration():
     assert tools["get_cereal_milestones"].description.startswith(
         "For wheat, durum wheat and barley:")
     assert tools["get_crop_fit"].description.startswith("Which crops fit one parcel")
+
+
+@pytest.mark.asyncio
+async def test_fit_inconsistent_campaign_label_is_invalid(monkeypatch):
+    box = _install(monkeypatch, _fit(1, ["fits"]))
+    res = await bioorch.get_crop_fit(
+        _ctx(), bioorch.GetCropFitArgs(parcel_id=URN, campaign="2026/28")
+    )
+    assert res.ok is False and res.unavailable_reason == "invalid_campaign"
+    assert "params" not in box

@@ -377,10 +377,17 @@ class GetCropFitArgs(BaseModel):
 
 def _default_campaign_year(today: date) -> int:
     """End year of the current campaign (Aug of C-1 to Jul of C)."""
-    return today.year + 1 if today.month >= 7 else today.year
+    return today.year + 1 if today.month >= 8 else today.year
 
 
 async def get_crop_fit(ctx: SessionContext, args: GetCropFitArgs) -> ToolResult:
+    if args.campaign and "/" in args.campaign:
+        start, suffix = args.campaign.split("/")
+        if int(suffix) != (int(start) + 1) % 100:
+            return ToolResult(
+                ok=False, payload=None, citations=(),
+                unavailable_reason="invalid_campaign",
+            )
     year = (
         int(args.campaign[:4]) + 1
         if args.campaign
