@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     )
     turn_timeout_seconds: int = 45
 
+    # Mobile channel: grace added to turn_timeout before the orphan reaper
+    # fails a queued/running row; history page cap; max user text length.
+    mobile_turn_orphan_grace_seconds: int = 15
+    mobile_history_limit: int = 50
+    mobile_text_max_chars: int = 2000
+
     # Tool registry: how long one tenant's installed-module intersection is
     # cached in memory before the next turn re-reads public.module_installations.
     registry_cache_seconds: int = 60

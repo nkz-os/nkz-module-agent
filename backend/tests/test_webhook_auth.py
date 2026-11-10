@@ -548,6 +548,13 @@ def test_reply_delivery_does_not_block_concurrent_acknowledgements(monkeypatch):
     monkeypatch.setattr("app.api.webhook.httpx.post", fake_sync_post)
     monkeypatch.setattr("app.api.webhook.httpx.AsyncClient", FakeAsyncClient)
 
+    async def no_reaper(max_age):
+        return 0
+
+    # The lifespan runs for real here; keep it off the database (its pool
+    # would be bound to the lifespan's event loop).
+    monkeypatch.setattr("app.main.mobile_turns.expire_orphans", no_reaper)
+
     app = create_app()
     results = {}
 

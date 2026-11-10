@@ -86,3 +86,11 @@ async def test_terminal_state_is_never_overwritten(db_pool):
     await turns.mark_failed(t.turn_id, "error", None)
     got = await turns.get_turn(t.tenant_id, t.user_id, t.turn_id)
     assert got.error_code == "interrupted"
+
+
+async def test_get_by_client_turn_id_is_scoped(db_pool):
+    t, _ = await _make("cid1")
+    got = await turns.get_by_client_turn_id("tenant_a", "u1", "cid1")
+    assert got is not None and got.turn_id == t.turn_id
+    assert await turns.get_by_client_turn_id("tenant_a", "u2", "cid1") is None
+    assert await turns.get_by_client_turn_id("tenant_b", "u1", "cid1") is None

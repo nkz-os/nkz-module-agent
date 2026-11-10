@@ -196,6 +196,12 @@ spec:
               value: "4000"
             - name: TURN_TIMEOUT_SECONDS
               value: "45"
+            - name: MOBILE_TURN_ORPHAN_GRACE_SECONDS
+              value: "15"
+            - name: MOBILE_HISTORY_LIMIT
+              value: "50"
+            - name: MOBILE_TEXT_MAX_CHARS
+              value: "2000"
             # Spend caps — finite by default (money on a public route).
             - name: MAX_TURNS_PER_TENANT_DAY
               value: "500"

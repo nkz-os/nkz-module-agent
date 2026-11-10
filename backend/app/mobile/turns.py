@@ -123,6 +123,21 @@ async def get_turn(tenant_id: str, user_id: str, turn_id: str) -> MobileTurn | N
     return _row(row) if row else None
 
 
+async def get_by_client_turn_id(
+    tenant_id: str, user_id: str, client_turn_id: str
+) -> MobileTurn | None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"""
+            SELECT {_COLUMNS} FROM agent_mobile_turns
+             WHERE tenant_id = $1 AND user_id = $2 AND client_turn_id = $3
+            """,
+            tenant_id, user_id, client_turn_id,
+        )
+    return _row(row) if row else None
+
+
 async def has_open_turn(tenant_id: str, user_id: str) -> bool:
     pool = await get_pool()
     async with pool.acquire() as conn:
