@@ -136,6 +136,11 @@ def test_prompt_contains_tool_budget_rule_and_numbering_is_monotonic():
         if not has:
             assert raw.index("9. READ FIRST") < raw.index("10. NO TOOLS")
         assert "an earlier answer in this conversation is never a source" in p
+        assert (
+            "Identifiers (parcel ids, URNs) are copied from a tool result of "
+            "this turn, never retyped from memory or from an earlier answer: "
+            "if you need one, read the list again."
+        ) in p
 
 
 def test_system_prompt_appends_context_note():
