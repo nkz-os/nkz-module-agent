@@ -128,7 +128,14 @@ def test_prompt_contains_tool_budget_rule_and_numbering_is_monotonic():
         ) in p
         nums = [int(n) for n in re.findall(r"(?m)^(\d+)\. [A-Z -]+:", raw)]
         assert nums == list(range(1, len(nums) + 1))
-        assert ("9. NO TOOLS AVAILABLE" in raw) == (not has)
+        assert (
+            "9. READ FIRST: when the turn names a parcel in context, read that "
+            "parcel in this turn"
+        ) in p
+        assert ("10. NO TOOLS AVAILABLE" in raw) == (not has)
+        if not has:
+            assert raw.index("9. READ FIRST") < raw.index("10. NO TOOLS")
+        assert "an earlier answer in this conversation is never a source" in p
 
 
 def test_system_prompt_appends_context_note():
