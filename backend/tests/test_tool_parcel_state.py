@@ -9,7 +9,7 @@ import pytest
 
 from app.domain.session import SessionContext
 from app.tools.adapters import mobile_api
-from app.tools.catalog import available_tools
+from app.tools.catalog import PARCEL_NOT_FOUND, available_tools
 
 PARCEL = "urn:ngsi-ld:AgriParcel:p1"
 
@@ -138,10 +138,10 @@ async def test_sources_passed_through(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_404_is_unreachable(monkeypatch):
+async def test_404_is_parcel_not_found(monkeypatch):
     _install(monkeypatch, {"error": "parcel_not_found"}, status=404)
     res = await mobile_api.get_parcel_state(_ctx(), mobile_api.GetParcelStateArgs(parcel_id=PARCEL))
-    assert res.ok is False and res.unavailable_reason == "parcel state unreachable"
+    assert res.ok is False and res.unavailable_reason == PARCEL_NOT_FOUND
     assert res.citations == ()
 
 

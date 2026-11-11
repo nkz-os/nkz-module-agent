@@ -16,7 +16,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.config import get_settings
 from app.domain.session import SessionContext
-from app.tools.catalog import Citation, ParcelId, ToolDefinition, ToolResult
+from app.tools.catalog import (
+    PARCEL_NOT_FOUND,
+    Citation,
+    ParcelId,
+    ToolDefinition,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +107,16 @@ async def get_vegetation_trend(
             )
             resp.raise_for_status()
             body = resp.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return ToolResult(
+                ok=False,
+                payload=None,
+                citations=(),
+                unavailable_reason=PARCEL_NOT_FOUND,
+            )
+        logger.warning("tool_get_vegetation_trend_error", exc_info=True)
+        return _fail()
     except (httpx.HTTPError, ValueError):
         logger.warning("tool_get_vegetation_trend_error", exc_info=True)
         return _fail()

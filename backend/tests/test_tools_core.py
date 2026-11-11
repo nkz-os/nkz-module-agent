@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from app.domain.session import SessionContext
 from app.tools.adapters import orion, timeseries
+from app.tools.catalog import PARCEL_NOT_FOUND
 
 
 def _ctx(tenant: str = "tenant_a") -> SessionContext:
@@ -575,7 +576,33 @@ async def test_get_parcel_snapshot_missing_entity_returns_not_found(monkeypatch)
         _ctx(), orion.GetParcelSnapshotArgs(parcel_id="urn:ngsi-ld:AgriParcel:x:1")
     )
     assert result.ok is False
-    assert result.unavailable_reason == "parcel not found"
+    assert result.unavailable_reason == PARCEL_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_get_parcel_snapshot_http_404_returns_not_found(monkeypatch):
+    class _NotFoundOrionClient:
+        def __init__(self, tenant_id):
+            pass
+
+        async def get_entity(self, entity_id):
+            raise httpx.HTTPStatusError(
+                "not found",
+                request=httpx.Request("GET", "http://orion.invalid"),
+                response=httpx.Response(
+                    404, request=httpx.Request("GET", "http://orion.invalid")
+                ),
+            )
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(orion, "OrionClient", _NotFoundOrionClient)
+    result = await orion.get_parcel_snapshot(
+        _ctx(), orion.GetParcelSnapshotArgs(parcel_id="urn:ngsi-ld:AgriParcel:x:1")
+    )
+    assert result.ok is False
+    assert result.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

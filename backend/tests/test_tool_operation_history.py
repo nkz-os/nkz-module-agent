@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.domain.session import SessionContext
 from app.tools.adapters import field_ops
-from app.tools.catalog import available_tools
+from app.tools.catalog import PARCEL_NOT_FOUND, available_tools
 
 PARCEL = "urn:ngsi-ld:AgriParcel:p1"
 
@@ -149,6 +149,11 @@ async def test_failures_and_empty_url(monkeypatch):
             _ctx(), field_ops.GetOperationHistoryArgs(parcel_id=PARCEL)
         )
         assert res.ok is False and res.unavailable_reason == "operation history unreachable"
+    _install(monkeypatch, {"detail": "x"}, 404)
+    res = await field_ops.get_operation_history(
+        _ctx(), field_ops.GetOperationHistoryArgs(parcel_id=PARCEL)
+    )
+    assert res.ok is False and res.unavailable_reason == PARCEL_NOT_FOUND
     box = _install(monkeypatch, {"operations": []}, url="")
     res = await field_ops.get_operation_history(
         _ctx(), field_ops.GetOperationHistoryArgs(parcel_id=PARCEL)

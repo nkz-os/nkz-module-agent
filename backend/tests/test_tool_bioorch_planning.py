@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.domain.session import SessionContext
 from app.tools.adapters import bioorch
-from app.tools.catalog import available_tools
+from app.tools.catalog import PARCEL_NOT_FOUND, available_tools
 
 URN = "urn:ngsi-ld:AgriParcel:p1"
 
@@ -142,7 +142,7 @@ def test_default_campaign_year_rolls_over_in_august():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body,status", [({"detail": "x"}, 503), ({"detail": "x"}, 404),
+@pytest.mark.parametrize("body,status", [({"detail": "x"}, 503),
                                          (["x"], 200),
                                          (ValueError("bad json"), 200),
                                          ({"state": "failed"}, 200)])
@@ -153,6 +153,19 @@ async def test_milestones_failures_are_fail_closed(monkeypatch, body, status):
     )
     assert res.ok is False
     assert res.unavailable_reason == "bioorchestrator unreachable"
+
+
+@pytest.mark.asyncio
+async def test_planning_404_is_parcel_not_found(monkeypatch):
+    _install(monkeypatch, {"detail": "x"}, 404)
+    for res in (
+        await bioorch.get_cereal_milestones(
+            _ctx(), bioorch.GetCerealMilestonesArgs(parcel_id=URN)
+        ),
+        await bioorch.get_crop_fit(_ctx(), bioorch.GetCropFitArgs(parcel_id=URN)),
+    ):
+        assert res.ok is False
+        assert res.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

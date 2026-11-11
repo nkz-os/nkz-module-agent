@@ -9,7 +9,7 @@ import pytest
 
 from app.domain.session import SessionContext
 from app.tools.adapters import vegetation
-from app.tools.catalog import available_tools
+from app.tools.catalog import PARCEL_NOT_FOUND, available_tools
 
 URN = "urn:ngsi-ld:AgriParcel:p1"
 
@@ -142,6 +142,15 @@ async def test_failures_are_fail_closed(monkeypatch, body, status):
         _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
     )
     assert res.ok is False and res.unavailable_reason == "vegetation scenes unreachable"
+
+
+@pytest.mark.asyncio
+async def test_404_is_parcel_not_found(monkeypatch):
+    _install(monkeypatch, {"detail": "x"}, 404)
+    res = await vegetation.get_vegetation_trend(
+        _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
+    )
+    assert res.ok is False and res.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

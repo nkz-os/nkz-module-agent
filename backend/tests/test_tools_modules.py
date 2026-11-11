@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from app.agent import registry
 from app.domain.session import SessionContext
 from app.tools.adapters import bioorch, cue, orion, weather
+from app.tools.catalog import PARCEL_NOT_FOUND
 from tests.conftest import requires_db
 
 
@@ -74,6 +75,17 @@ class _HttpErrorResponse:
             request=httpx.Request("GET", "http://module.invalid"),
             response=httpx.Response(
                 500, request=httpx.Request("GET", "http://module.invalid")
+            ),
+        )
+
+
+class _NotFoundResponse:
+    def raise_for_status(self):
+        raise httpx.HTTPStatusError(
+            "not found",
+            request=httpx.Request("GET", "http://module.invalid"),
+            response=httpx.Response(
+                404, request=httpx.Request("GET", "http://module.invalid")
             ),
         )
 
@@ -335,6 +347,21 @@ async def test_get_weather_conditions_failures_are_unavailable(monkeypatch):
     assert result.ok is False
     assert result.payload is None
     assert result.unavailable_reason == "weather map unreachable"
+
+
+@pytest.mark.asyncio
+async def test_get_weather_conditions_404_is_parcel_not_found(monkeypatch):
+    monkeypatch.setattr(
+        weather.httpx,
+        "AsyncClient",
+        lambda timeout=None: _FailingClient(response=_NotFoundResponse()),
+    )
+    monkeypatch.setattr(weather, "get_settings", lambda: _weather_settings())
+    result = await weather.get_weather_conditions(
+        _ctx(), weather.GetWeatherConditionsArgs(parcel_id="urn:ngsi-ld:AgriParcel:p1")
+    )
+    assert result.ok is False
+    assert result.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

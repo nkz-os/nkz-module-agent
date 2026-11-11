@@ -16,7 +16,13 @@ from nkz_platform_sdk.orion import OrionClient
 from pydantic import BaseModel
 
 from app.domain.session import SessionContext
-from app.tools.catalog import Citation, ParcelId, ToolDefinition, ToolResult
+from app.tools.catalog import (
+    PARCEL_NOT_FOUND,
+    Citation,
+    ParcelId,
+    ToolDefinition,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +365,16 @@ async def get_parcel_snapshot(
     client = OrionClient(ctx.tenant_id)
     try:
         entity = await client.get_entity(args.parcel_id)
-    except Exception:
+    except Exception as exc:
+        # The SDK raises on 404; an unknown URN is a wrong id, not an outage.
+        response = getattr(exc, "response", None)
+        if getattr(response, "status_code", None) == 404:
+            return ToolResult(
+                ok=False,
+                payload=None,
+                citations=(),
+                unavailable_reason=PARCEL_NOT_FOUND,
+            )
         logger.warning("tool_get_parcel_snapshot_orion_error", exc_info=True)
         return ToolResult(
             ok=False,
@@ -377,7 +392,7 @@ async def get_parcel_snapshot(
             ok=False,
             payload=None,
             citations=(),
-            unavailable_reason="parcel not found",
+            unavailable_reason=PARCEL_NOT_FOUND,
         )
     snapshot = _snapshot(entity)
     return ToolResult(
