@@ -783,6 +783,7 @@ async def test_module_tools_filtered_out_when_tenant_has_no_installs(db_pool):
     assert "get_risk_catalog" not in names
     assert "get_operation_history" not in names
     assert "get_vigour_zones" not in names
+    assert "get_farm_overview" not in names
     assert "get_vegetation_trend" not in names
     assert "get_weather_conditions" not in names
     assert "get_crop_trial_evidence" not in names

@@ -65,6 +65,20 @@ ERROR_TEXT = (
 # answered, never with silence.
 EMPTY_REPLY_TEXT = "I don't have an answer for that. Could you rephrase the question?"
 
+# A FACT folded into the last tool message of the pass before the first
+# no-tools pass (never a user message after tool messages: some providers
+# reject that shape). What to do about it is system prompt rule 8 (trusted),
+# since instructions inside a fence are ignored by design.
+_ANSWER_NOW_TEXT = (
+    "Tool budget exhausted for this question; no further tool calls will run "
+    "in this turn."
+)
+# Tokens the final no-tools pass carries on top of the tool results: the nudge
+# and one placeholder per excess call. Kept out of the room given to results.
+_NUDGE_TOKENS = 70
+_PLACEHOLDER_TOKENS = 40
+_TOOL_BUDGET_UNAVAILABLE = "unavailable: tool budget exhausted"
+
 _UNCONFIGURED_TEXTS = {
     "blocked": BLOCKED_TEXT,
     "key_unreadable": KEY_UNREADABLE_TEXT,
@@ -131,7 +145,8 @@ def _size_memory(
 
 
 def _tool_result_chars(
-    budget: TurnBudget, reply: object, assistant_message: dict, n_calls: int
+    budget: TurnBudget, reply: object, assistant_message: dict, n_calls: int,
+    extra_tokens: int = 0,
 ) -> int:
     """Characters each tool result of this pass may use.
 
@@ -150,6 +165,7 @@ def _tool_result_chars(
         - reply.tokens_prompt
         - _json_tokens(assistant_message)
         - _REPLY_RESERVE_TOKENS
+        - extra_tokens
     )
     per_call = (
         max(remaining, 0) * _CHARS_PER_TOKEN // n_calls - _TOOL_MESSAGE_OVERHEAD_CHARS
@@ -246,14 +262,38 @@ async def run_turn(
             user_message,
         ]
 
+        answer_now_sent = False
         while True:
             budget.check_deadline()
+            # The last allowed iteration, or an empty tool allowance, always
+            # runs without tools so what was read becomes an answer.
+            offer_tools = (
+                tools
+                if budget.remaining_iterations() > 1
+                and budget.remaining_tool_calls() > 0
+                else None
+            )
             budget.spend_iteration()
 
-            reply = await complete(
-                messages, tools=tools, tenant_id=ctx.tenant_id,
-                timeout_s=budget.remaining_seconds(),
-            )
+            try:
+                reply = await complete(
+                    messages, tools=offer_tools, tenant_id=ctx.tenant_id,
+                    timeout_s=budget.remaining_seconds(),
+                )
+            except LLMProviderError:
+                if offer_tools is not None or tools is None or not answer_now_sent:
+                    raise
+                # The no-tools answer pass failed (some providers refuse a
+                # tool-bearing history without tool specs): the model may
+                # still answer with them, so retry once before the error path.
+                logger.warning(
+                    "answer_now_fallback_retry tenant_id=%s", ctx.tenant_id,
+                    exc_info=True,
+                )
+                reply = await complete(
+                    messages, tools=tools, tenant_id=ctx.tenant_id,
+                    timeout_s=budget.remaining_seconds(),
+                )
             model = reply.model
             llm_origin = reply.origin
             prompt_tokens += reply.tokens_prompt
@@ -293,11 +333,33 @@ async def run_turn(
                 "tool_calls": list(reply.tool_calls),
             }
             messages.append(assistant_message)
+            # Only as many calls as the budget still allows run, in order; the
+            # excess is answered without execution so the provider sees a
+            # result for every call it made. A pass offered no tools executes
+            # none (the model ignored the missing specs).
+            n_allowed = (
+                budget.remaining_tool_calls() if offer_tools is not None else 0
+            )
+            allowed = reply.tool_calls[:n_allowed]
+            excess = reply.tool_calls[n_allowed:]
+            if excess:
+                logger.warning(
+                    "tool_calls_over_budget tenant_id=%s requested=%d allowed=%d",
+                    ctx.tenant_id, len(reply.tool_calls), len(allowed),
+                )
+            next_offers_tools = (
+                budget.remaining_iterations() > 1
+                and budget.remaining_tool_calls() - len(allowed) > 0
+            )
+            extra_tokens = 0
+            if not next_offers_tools:
+                extra_tokens = _NUDGE_TOKENS + _PLACEHOLDER_TOKENS * len(excess)
             # One pass can ask for several tools; they share what is left.
             per_call_chars = _tool_result_chars(
-                budget, reply, assistant_message, len(reply.tool_calls)
+                budget, reply, assistant_message, max(len(allowed), 1),
+                extra_tokens,
             )
-            for call in reply.tool_calls:
+            for call in allowed:
                 seen_calls.append(call)
                 budget.spend_tool_call()
                 messages.append(
@@ -306,6 +368,22 @@ async def run_turn(
                         turn_citations,
                     )
                 )
+            # Reported calls are the ones the model attempted, executed or not,
+            # in request order (the excess is always the tail).
+            seen_calls.extend(excess)
+            for call in excess:
+                messages.append(
+                    _tool_result(call.get("id") or "", _TOOL_BUDGET_UNAVAILABLE)
+                )
+            if not next_offers_tools and not answer_now_sent:
+                answer_now_sent = True
+                last = messages[-1]
+                messages[-1] = {
+                    **last,
+                    "content": last["content"]
+                    + "\n\n"
+                    + _fence_tool("tool budget", _ANSWER_NOW_TEXT),
+                }
 
     except LLMUnconfigured as exc:
         logger.warning(

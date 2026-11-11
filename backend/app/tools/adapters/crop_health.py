@@ -1,4 +1,4 @@
-"""Crop-health adapter: intra-parcel zones whose vigour or stress differs.
+"""Crop-health adapter: intra-parcel vigour zones and the whole-farm overview.
 
 Header set is the one the platform backends verify: X-Tenant-ID, X-User-ID,
 X-User-Roles and X-Auth-Signature (HMAC). The route takes the short parcel id.
@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 from nkz_platform_sdk.crypto import generate_hmac_signature
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import get_settings
 from app.domain.session import SessionContext
@@ -55,6 +55,17 @@ class GetVigourZonesArgs(BaseModel):
     parcel_id: ParcelId
 
 
+def _headers(ctx: SessionContext, settings: Any) -> dict[str, str]:
+    return {
+        "X-Tenant-ID": ctx.tenant_id,
+        "X-User-ID": ctx.user_id,
+        "X-User-Roles": ",".join(ctx.roles),
+        "X-Auth-Signature": generate_hmac_signature(
+            settings.hmac_secret, "", ctx.tenant_id
+        ),
+    }
+
+
 def _fail() -> ToolResult:
     return ToolResult(
         ok=False, payload=None, citations=(), unavailable_reason=_UNAVAILABLE
@@ -94,14 +105,7 @@ async def get_vigour_zones(
 
     short_id = args.parcel_id.rsplit(":", 1)[1]
     url = f"{settings.crop_health_url.rstrip('/')}/api/crop-health/assessments/zones"
-    headers = {
-        "X-Tenant-ID": ctx.tenant_id,
-        "X-User-ID": ctx.user_id,
-        "X-User-Roles": ",".join(ctx.roles),
-        "X-Auth-Signature": generate_hmac_signature(
-            settings.hmac_secret, "", ctx.tenant_id
-        ),
-    }
+    headers = _headers(ctx, settings)
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             resp = await client.get(
@@ -166,4 +170,171 @@ GET_VIGOUR_ZONES = ToolDefinition(
     required_module="crop-health",
     required_setting="crop_health_url",
     timeout_s=12.0,
+)
+
+
+_OVERVIEW_UNAVAILABLE = "crop health unreachable"
+# The 8000-char fence on a tool result (app.agent.prompt.MAX_PAYLOAD) is the
+# effective bound; this cap only keeps the list well inside it.
+_OVERVIEW_CAP = 40
+_URN_PREFIX = "urn:ngsi-ld:"
+_PARCEL_URN_PREFIX = "urn:ngsi-ld:AgriParcel:"
+
+
+class _UpstreamNextJob(_Frozen):
+    kind: str
+    when: str | None = None
+    detail: Any = None
+
+
+class _UpstreamParcel(_Frozen):
+    parcelId: str
+    parcelName: str | None = None
+    cropName: str | None = None
+    phenologyStage: str | None = None
+    areaHa: float | None = None
+    overallSeverity: str | None = None
+    cwsiValue: float | None = None
+    vigorIndex: float | None = None
+    assessedAt: str | None = None
+    hasData: bool = False
+    nextJob: _UpstreamNextJob | None = None
+
+
+class _UpstreamSummary(_Frozen):
+    surprises: int = 0
+    jobsToday: int = 0
+    noData: int = 0
+
+
+class _UpstreamOverview(_Frozen):
+    parcels: list[_UpstreamParcel]
+    summary: _UpstreamSummary = Field(default_factory=_UpstreamSummary)
+
+
+class NextJob(_Frozen):
+    kind: str
+    when: str | None = None
+    detail: Any = None
+
+
+class OverviewParcel(_Frozen):
+    parcel_id: str
+    name: str | None = None
+    crop: str | None = None
+    stage: str | None = None
+    area_ha: float | None = None
+    severity: str | None = None
+    cwsi: float | None = None
+    vigor: float | None = None
+    assessed_at: str | None = None
+    has_data: bool = False
+    next_job: NextJob | None = None
+
+
+class OverviewSummary(_Frozen):
+    surprises: int = 0
+    jobs_today: int = 0
+    no_data: int = 0
+
+
+class FarmOverview(_Frozen):
+    parcels: list[OverviewParcel]
+    summary: OverviewSummary
+    truncated: bool = False
+
+
+class GetFarmOverviewArgs(BaseModel):
+    pass
+
+
+def _overview_fail() -> ToolResult:
+    return ToolResult(
+        ok=False, payload=None, citations=(), unavailable_reason=_OVERVIEW_UNAVAILABLE
+    )
+
+
+def _map_parcel(p: _UpstreamParcel) -> OverviewParcel:
+    job = p.nextJob
+    return OverviewParcel(
+        parcel_id=(
+            p.parcelId
+            if p.parcelId.startswith(_URN_PREFIX)
+            else f"{_PARCEL_URN_PREFIX}{p.parcelId}"
+        ),
+        name=p.parcelName,
+        crop=p.cropName,
+        stage=p.phenologyStage,
+        area_ha=p.areaHa,
+        severity=p.overallSeverity,
+        cwsi=p.cwsiValue,
+        vigor=p.vigorIndex,
+        assessed_at=p.assessedAt,
+        has_data=p.hasData,
+        next_job=(
+            NextJob(kind=job.kind, when=job.when, detail=job.detail or None)
+            if job is not None
+            else None
+        ),
+    )
+
+
+async def get_farm_overview(
+    ctx: SessionContext, args: GetFarmOverviewArgs
+) -> ToolResult:
+    settings = get_settings()
+    if not settings.crop_health_url:
+        return _overview_fail()
+
+    url = f"{settings.crop_health_url.rstrip('/')}/api/crop-health/parcels"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=_headers(ctx, settings))
+            resp.raise_for_status()
+            body = resp.json()
+    except (httpx.HTTPError, ValueError):
+        logger.warning("tool_get_farm_overview_error", exc_info=True)
+        return _overview_fail()
+
+    try:
+        upstream = _UpstreamOverview.model_validate(body)
+        overview = FarmOverview(
+            parcels=[_map_parcel(p) for p in upstream.parcels[:_OVERVIEW_CAP]],
+            summary=OverviewSummary(
+                surprises=upstream.summary.surprises,
+                jobs_today=upstream.summary.jobsToday,
+                no_data=upstream.summary.noData,
+            ),
+            truncated=len(upstream.parcels) > _OVERVIEW_CAP,
+        )
+    except ValidationError:
+        logger.warning("tool_get_farm_overview_malformed", exc_info=True)
+        return _overview_fail()
+
+    return ToolResult(
+        ok=True,
+        payload=overview.model_dump(mode="json", exclude_none=True),
+        citations=(
+            Citation(
+                source="crop-health:parcels",
+                retrieved_at=datetime.now(timezone.utc),
+                detail="tenant work list",
+            ),
+        ),
+    )
+
+
+GET_FARM_OVERVIEW = ToolDefinition(
+    name="get_farm_overview",
+    description=(
+        "One-call overview of every parcel of the holding: name, crop, "
+        "phenological stage, overall severity, water stress (CWSI), vigour, "
+        "assessment date and the next job due. Use this for whole-farm "
+        "questions instead of reading parcels one by one."
+    ),
+    args_model=GetFarmOverviewArgs,
+    handler=get_farm_overview,
+    required_module="crop-health",
+    required_setting="crop_health_url",
+    timeout_s=15.0,
 )

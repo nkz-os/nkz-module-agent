@@ -71,6 +71,12 @@ class TurnBudget:
             return self._timeout_s
         return max(0.0, self._timeout_s - (self._clock() - self._started_at))
 
+    def remaining_tool_calls(self) -> int:
+        return max(0, int(self._max_tool_calls - self._tool_calls))
+
+    def remaining_iterations(self) -> int:
+        return max(0, int(self._max_iterations - self._iterations))
+
     def _check_alive(self) -> None:
         if self._exhausted_reason is not None:
             raise BudgetExhausted(self._exhausted_reason)

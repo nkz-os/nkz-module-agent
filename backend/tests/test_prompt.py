@@ -114,6 +114,23 @@ def test_prompt_contains_uncertainty_rule():
         assert "never presented as a platform reading" in p
 
 
+def test_prompt_contains_tool_budget_rule_and_numbering_is_monotonic():
+    import re
+
+    for has in (True, False):
+        raw = system_prompt(has_tools=has)
+        p = " ".join(raw.split())
+        assert (
+            "8. TOOL BUDGET: when a tool result says the tool budget is "
+            "exhausted, answer at once from what you have already read, in the "
+            "language of the farmer's message, state plainly what you could "
+            "not read, and keep the sources."
+        ) in p
+        nums = [int(n) for n in re.findall(r"(?m)^(\d+)\. [A-Z -]+:", raw)]
+        assert nums == list(range(1, len(nums) + 1))
+        assert ("9. NO TOOLS AVAILABLE" in raw) == (not has)
+
+
 def test_system_prompt_appends_context_note():
     base = system_prompt(True)
     assert system_prompt(True, context_note=None) == base

@@ -14,6 +14,7 @@ def test_available_tools_exposes_core_and_module_tools():
     names = {t.name for t in tools}
     assert names == {
         "get_parcels",
+        "get_farm_overview",
         "get_parcel_snapshot",
         "get_timeseries",
         "get_active_alerts",
@@ -37,6 +38,7 @@ def test_available_tools_exposes_core_and_module_tools():
         "get_risk_catalog": "risk",
         "get_operation_history": "field-operations",
         "get_vigour_zones": "crop-health",
+        "get_farm_overview": "crop-health",
         "get_vegetation_trend": "vegetation-prime",
         "get_weather_conditions": "weather-map",
         "get_crop_trial_evidence": "bioorchestrator",
