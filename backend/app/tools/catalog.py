@@ -28,6 +28,14 @@ def _no_dot_segments(value: str) -> str:
     return value
 
 
+# One reason for every adapter whose upstream answers 404 for a parcel id, so
+# the model can tell a wrong id (retry with an id from a list tool) from a
+# service outage.
+PARCEL_NOT_FOUND = (
+    "parcel not found in this holding; take parcel ids from get_parcels "
+    "or get_farm_overview in this turn"
+)
+
 # Shared input surface: every tool that takes a parcel identifier validates it
 # BEFORE any URL or query is built from it. Only the NGSI-LD URN form is
 # accepted, with no dot segments.
@@ -59,6 +67,13 @@ class ToolResult:
     payload: dict | list | None
     citations: tuple[Citation, ...]
     unavailable_reason: str | None = None
+
+
+def parcel_not_found() -> ToolResult:
+    """The shared reply for an upstream that does not know the parcel id."""
+    return ToolResult(
+        ok=False, payload=None, citations=(), unavailable_reason=PARCEL_NOT_FOUND
+    )
 
 
 @dataclass(frozen=True)

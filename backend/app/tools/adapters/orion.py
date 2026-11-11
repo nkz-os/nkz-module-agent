@@ -16,7 +16,13 @@ from nkz_platform_sdk.orion import OrionClient
 from pydantic import BaseModel
 
 from app.domain.session import SessionContext
-from app.tools.catalog import Citation, ParcelId, ToolDefinition, ToolResult
+from app.tools.catalog import (
+    Citation,
+    ParcelId,
+    ToolDefinition,
+    ToolResult,
+    parcel_not_found,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +365,11 @@ async def get_parcel_snapshot(
     client = OrionClient(ctx.tenant_id)
     try:
         entity = await client.get_entity(args.parcel_id)
-    except Exception:
+    except Exception as exc:
+        # The SDK raises on 404; an unknown URN is a wrong id, not an outage.
+        response = getattr(exc, "response", None)
+        if getattr(response, "status_code", None) == 404:
+            return parcel_not_found()
         logger.warning("tool_get_parcel_snapshot_orion_error", exc_info=True)
         return ToolResult(
             ok=False,
@@ -373,12 +383,7 @@ async def get_parcel_snapshot(
         # get_entity returning nothing means the URN simply is not there —
         # typically a parcel id the model guessed. That is an honest
         # "not found", not an error worth a warning.
-        return ToolResult(
-            ok=False,
-            payload=None,
-            citations=(),
-            unavailable_reason="parcel not found",
-        )
+        return parcel_not_found()
     snapshot = _snapshot(entity)
     return ToolResult(
         ok=True,

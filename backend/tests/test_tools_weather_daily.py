@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.domain.session import SessionContext
 from app.tools.adapters import weather
-from app.tools.catalog import available_tools
+from app.tools.catalog import PARCEL_NOT_FOUND, available_tools
 
 PARCEL = "urn:ngsi-ld:AgriParcel:p1"
 
@@ -303,6 +303,19 @@ async def test_conditions_payload_without_kind_has_neither_key(monkeypatch):
         _ctx(), weather.GetWeatherConditionsArgs(parcel_id=PARCEL)
     )
     assert "kind" not in result.payload and "valid_date" not in result.payload
+
+
+@pytest.mark.asyncio
+async def test_daily_404_is_parcel_not_found(monkeypatch):
+    err = httpx.HTTPStatusError(
+        "missing",
+        request=httpx.Request("GET", "http://weather-api.invalid/x"),
+        response=httpx.Response(404, request=httpx.Request("GET", "http://x.invalid")),
+    )
+    _install(monkeypatch, exc=err)
+    result = await _call()
+    assert result.ok is False
+    assert result.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

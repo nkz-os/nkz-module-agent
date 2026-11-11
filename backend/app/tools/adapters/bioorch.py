@@ -19,7 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from app.config import get_settings
 from app.domain.session import SessionContext
-from app.tools.catalog import Citation, ParcelId, ToolDefinition, ToolResult
+from app.tools.catalog import (
+    Citation,
+    ParcelId,
+    ToolDefinition,
+    ToolResult,
+    parcel_not_found,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,10 +196,17 @@ def _planning_fail() -> ToolResult:
     )
 
 
+# Returned by _planning_get when the upstream does not know the parcel.
+_PARCEL_MISSING = object()
+
+
 async def _planning_get(
     ctx: SessionContext, parcel_id: str, suffix: str, params: dict[str, Any] | None
-) -> dict | None:
-    """GET a planning route; None on any failure (never raises)."""
+) -> dict | object | None:
+    """GET a planning route; None on any failure (never raises).
+
+    The _PARCEL_MISSING sentinel (compare with `is`) means upstream 404.
+    """
     settings = get_settings()
     if not settings.bioorch_api_url or not settings.internal_service_secret:
         return None
@@ -210,6 +223,11 @@ async def _planning_get(
             resp = await client.get(url, headers=headers, params=params)
             resp.raise_for_status()
             body = resp.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return _PARCEL_MISSING
+        logger.warning("tool_bioorch_planning_error suffix=%s", suffix, exc_info=True)
+        return None
     except (httpx.HTTPError, ValueError):
         logger.warning("tool_bioorch_planning_error suffix=%s", suffix, exc_info=True)
         return None
@@ -272,6 +290,8 @@ async def get_cereal_milestones(
     ctx: SessionContext, args: GetCerealMilestonesArgs
 ) -> ToolResult:
     body = await _planning_get(ctx, args.parcel_id, "phenology", None)
+    if body is _PARCEL_MISSING:
+        return parcel_not_found()
     if body is None:
         return _planning_fail()
     try:
@@ -394,6 +414,8 @@ async def get_crop_fit(ctx: SessionContext, args: GetCropFitArgs) -> ToolResult:
         else _default_campaign_year(datetime.now(timezone.utc).date())
     )
     body = await _planning_get(ctx, args.parcel_id, "fit", {"campaign": year})
+    if body is _PARCEL_MISSING:
+        return parcel_not_found()
     if body is None:
         return _planning_fail()
     try:
