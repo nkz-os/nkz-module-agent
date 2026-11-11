@@ -18,11 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.config import get_settings
 from app.domain.session import SessionContext
 from app.tools.catalog import (
-    PARCEL_NOT_FOUND,
     Citation,
     ParcelId,
     ToolDefinition,
     ToolResult,
+    parcel_not_found,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,12 +171,7 @@ async def get_parcel_state(
             body = resp.json()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            return ToolResult(
-                ok=False,
-                payload=None,
-                citations=(),
-                unavailable_reason=PARCEL_NOT_FOUND,
-            )
+            return parcel_not_found()
         logger.warning("tool_get_parcel_state_error", exc_info=True)
         return _fail()
     except (httpx.HTTPError, ValueError):

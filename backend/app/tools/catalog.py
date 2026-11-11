@@ -69,6 +69,13 @@ class ToolResult:
     unavailable_reason: str | None = None
 
 
+def parcel_not_found() -> ToolResult:
+    """The shared reply for an upstream that does not know the parcel id."""
+    return ToolResult(
+        ok=False, payload=None, citations=(), unavailable_reason=PARCEL_NOT_FOUND
+    )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """One tool offered to the model."""

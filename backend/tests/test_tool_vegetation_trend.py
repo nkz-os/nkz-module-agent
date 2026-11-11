@@ -151,15 +151,7 @@ async def test_404_is_parcel_not_found(monkeypatch):
         _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
     )
     assert res.ok is False and res.unavailable_reason == PARCEL_NOT_FOUND
-
-
-@pytest.mark.asyncio
-async def test_404_is_a_failure_not_no_data(monkeypatch):
-    _install(monkeypatch, {"detail": "Not found"}, 404)
-    res = await vegetation.get_vegetation_trend(
-        _ctx(), vegetation.GetVegetationTrendArgs(parcel_id=URN)
-    )
-    assert res.ok is False and res.citations == ()
+    assert res.citations == ()
 
 
 @pytest.mark.asyncio

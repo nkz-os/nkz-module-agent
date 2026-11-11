@@ -398,6 +398,17 @@ class _HttpErrorResponse:
         )
 
 
+class _NotFoundResponse:
+    def raise_for_status(self):
+        raise httpx.HTTPStatusError(
+            "not found",
+            request=httpx.Request("GET", "http://timeseries.invalid"),
+            response=httpx.Response(
+                404, request=httpx.Request("GET", "http://timeseries.invalid")
+            ),
+        )
+
+
 class _HtmlResponse:
     def raise_for_status(self):
         pass
@@ -418,6 +429,28 @@ class _FailingClient:
 
     async def get(self, url, params=None, headers=None):
         return self._response
+
+
+@pytest.mark.asyncio
+async def test_get_timeseries_http_404_is_parcel_not_found(monkeypatch):
+    monkeypatch.setattr(
+        timeseries.httpx,
+        "AsyncClient",
+        lambda timeout=None: _FailingClient(response=_NotFoundResponse()),
+    )
+    monkeypatch.setattr(timeseries, "get_settings", lambda: _settings())
+
+    result = await timeseries.get_timeseries(
+        _ctx(),
+        timeseries.GetTimeseriesArgs(
+            parcel_id="urn:ngsi-ld:AgriParcel:p1",
+            metric=timeseries.Metric.ndvi,
+            days=30,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.unavailable_reason == PARCEL_NOT_FOUND
 
 
 @pytest.mark.asyncio

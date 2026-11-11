@@ -20,11 +20,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 from app.config import get_settings
 from app.domain.session import SessionContext
 from app.tools.catalog import (
-    PARCEL_NOT_FOUND,
     Citation,
     ParcelId,
     ToolDefinition,
     ToolResult,
+    parcel_not_found,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,18 +197,12 @@ def _planning_fail() -> ToolResult:
 
 
 # Returned by _planning_get when the upstream does not know the parcel.
-_PARCEL_MISSING: dict = {}
-
-
-def _planning_missing() -> ToolResult:
-    return ToolResult(
-        ok=False, payload=None, citations=(), unavailable_reason=PARCEL_NOT_FOUND
-    )
+_PARCEL_MISSING = object()
 
 
 async def _planning_get(
     ctx: SessionContext, parcel_id: str, suffix: str, params: dict[str, Any] | None
-) -> dict | None:
+) -> dict | object | None:
     """GET a planning route; None on any failure (never raises).
 
     The _PARCEL_MISSING sentinel (compare with `is`) means upstream 404.
@@ -297,7 +291,7 @@ async def get_cereal_milestones(
 ) -> ToolResult:
     body = await _planning_get(ctx, args.parcel_id, "phenology", None)
     if body is _PARCEL_MISSING:
-        return _planning_missing()
+        return parcel_not_found()
     if body is None:
         return _planning_fail()
     try:
@@ -421,7 +415,7 @@ async def get_crop_fit(ctx: SessionContext, args: GetCropFitArgs) -> ToolResult:
     )
     body = await _planning_get(ctx, args.parcel_id, "fit", {"campaign": year})
     if body is _PARCEL_MISSING:
-        return _planning_missing()
+        return parcel_not_found()
     if body is None:
         return _planning_fail()
     try:
