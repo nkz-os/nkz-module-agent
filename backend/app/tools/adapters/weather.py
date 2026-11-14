@@ -39,9 +39,9 @@ FROZEN_METRICS = (
     "solar_radiation",
     "eto",
     "water_balance",
-    "frost_risk",
     "soil_moisture",
 )
+# frost_risk was retired by weather-map; the frost signal is risk's warning.
 
 
 class MetricStats(BaseModel):

@@ -301,6 +301,7 @@ async def test_get_weather_conditions_sends_tenant_and_user_headers(monkeypatch)
     assert client.captured["headers"]["X-Auth-Signature"]
     assert "urn:ngsi-ld:AgriParcel:p1" in client.captured["url"]
     assert client.captured["params"]["metrics"] == ",".join(weather.FROZEN_METRICS)
+    assert "frost_risk" not in client.captured["params"]["metrics"].split(",")
 
 
 @pytest.mark.asyncio
